@@ -117,3 +117,5 @@ if __name__ == "__main__":
 
     movies_df = pl.read_parquet(args.movies_path)
     run_cold_start_job(movies_df, args.output_path, args.api_key, args.model_name, args.requests_per_minute)
+
+

@@ -1,42 +1,11 @@
-# Data (regenerable from raw MovieLens download + pipeline scripts)
-data/raw/*
-!data/raw/.gitkeep
-data/processed/*
-!data/processed/.gitkeep
-
-# Checkpoints (large, regenerable, and often stored on Google Drive instead)
-*.pt
-*.pth
-
-# MLflow local tracking store
-mlruns/
-mlartifacts/
-mlflow.db
-# Streamlit -- config.toml (theme) is committed on purpose, secrets.toml
-# never should be, it's the file st.secrets reads local API keys/credentials
-# from (e.g. a Gemini key for scripts/run_cold_start.py, if you keep one
-# there instead of passing --api-key on the command line).
-.streamlit/secrets.toml
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Python
+data/raw/
+data/processed/
+checkpoints/
 __pycache__/
 *.pyc
-.pytest_cache/
-.ruff_cache/
-*.egg-info/
 .venv/
 venv/
-
-# Environment
 .env
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Editors
-.vscode/
-.idea/
+mlflow.db
+mlruns/
+.pytest_cache/

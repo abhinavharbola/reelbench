@@ -82,7 +82,11 @@ class PipelineRecommender:
             user_id, candidates, **self.feature_context,
             seen_items=self.seen_by_user.get(user_id, set()),
         )
-        return rank_candidates(self.ranker, features, top_k=k)
+        # recommend() must return list[item_id] per the harness contract
+        # (src/eval/metrics.py) -- rank_candidates() now returns
+        # [(item_id, score), ...], so unwrap to just the ids here.
+        ranked = rank_candidates(self.ranker, features, top_k=k)
+        return [item_id for item_id, _ in ranked]
 
 
 def evaluate_model(name: str, model, test: pl.DataFrame, catalog_size: int, item_genres: dict) -> dict:
@@ -158,11 +162,12 @@ def main():
 
     existing = pl.read_csv(table_path) if table_path.exists() else pl.DataFrame()
     new_table = pl.DataFrame(new_rows)
+    new_table = new_table.select(["model"] + [c for c in new_table.columns if c != "model"])
 
     if existing.height > 0:
         # replace any stale rows for the models just re-scored, keep everyone else
         existing = existing.filter(~pl.col("model").is_in(MODEL_PREFIXES))
-        combined = pl.concat([existing, new_table.select(existing.columns)])
+        combined = pl.concat([existing, new_table.select(existing.columns)]) if existing.height > 0 else new_table
     else:
         combined = new_table
 
@@ -174,3 +179,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

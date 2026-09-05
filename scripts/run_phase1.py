@@ -16,10 +16,12 @@ Requires data/processed/interactions.parquet and movies.parquet to already
 exist (run src/data/ingest.py first, after placing the raw MovieLens 25M
 files in data/raw/ml-25m/).
 
-Note: this script always overwrites results/comparison_table.csv with
-exactly these 3 rows. If you've since run evaluate_pipeline_models.py to
-add the two-tower/SASRec rows, re-running this script will wipe them back
-out, re-run evaluate_pipeline_models.py afterward to restore them.
+Note: this script only replaces the 3 rows it owns (popularity,
+item_item_cf, als). If results/comparison_table.csv already has
+two_tower/sasrec rows from evaluate_pipeline_models.py, those are kept as-is
+-- this mirrors evaluate_pipeline_models.py's own merge-and-preserve
+behavior instead of the previous unconditional overwrite, which used to
+silently wipe out the two-tower/SASRec rows on any re-run of this script.
 """
 
 import pickle
@@ -42,6 +44,7 @@ MODELS_DIR = PROCESSED_DIR / "models"
 RESULTS_DIR = Path("results")
 K_VALUES = (10, 20)
 TOP_K_FOR_RECS = max(K_VALUES)
+BASELINE_MODEL_NAMES = ["popularity", "item_item_cf", "als"]
 
 
 def evaluate_model(name: str, model, test: pl.DataFrame, catalog_size: int, item_genres: dict) -> dict:
@@ -113,14 +116,27 @@ def main():
     print("ALS done")
 
     RESULTS_DIR.mkdir(exist_ok=True)
-    table = pl.DataFrame(results).select(
-        ["model"] + [c for c in pl.DataFrame(results).columns if c != "model"]
-    )
-    table.write_csv(RESULTS_DIR / "comparison_table.csv")
-    print(table)
-    print(f"\nwritten to {RESULTS_DIR / 'comparison_table.csv'}")
+    table_path = RESULTS_DIR / "comparison_table.csv"
+    new_table = pl.DataFrame(results)
+    new_table = new_table.select(["model"] + [c for c in new_table.columns if c != "model"])
+
+    # merge-preserve, same pattern as evaluate_pipeline_models.py: replace
+    # only the 3 rows this script owns, keep any two_tower/sasrec rows
+    # already on disk instead of blowing the whole file away.
+    if table_path.exists():
+        existing = pl.read_csv(table_path)
+        existing = existing.filter(~pl.col("model").is_in(BASELINE_MODEL_NAMES))
+        combined = pl.concat([new_table, existing.select(new_table.columns)]) if existing.height > 0 else new_table
+    else:
+        combined = new_table
+
+    combined.write_csv(table_path)
+    print(combined)
+    print(f"\nwritten to {table_path}")
     print(f"models written to {MODELS_DIR}")
 
 
 if __name__ == "__main__":
     main()
+
+

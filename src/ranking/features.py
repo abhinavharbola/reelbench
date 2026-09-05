@@ -149,3 +149,5 @@ def build_features_for_candidates(
             "genre_match": genre_match_score(profile, item_genres.get(movie_id, set())),
         })
     return pl.DataFrame(rows)
+
+

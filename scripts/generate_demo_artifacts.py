@@ -210,7 +210,11 @@ def main():
                     user_id, candidates, **feature_context,
                     seen_items=full_seen_by_user.get(user_id, set()),
                 )
-                return rank_candidates(self.ranker, feats, top_k=k)
+                # recommend() must return list[item_id] per the harness
+                # contract (src/eval/metrics.py) -- rank_candidates() now
+                # returns [(item_id, score), ...], unwrap to just the ids.
+                ranked = rank_candidates(self.ranker, feats, top_k=k)
+                return [item_id for item_id, _ in ranked]
 
         evaluate(prefix, MockRecommender(retriever, ranker))
         print(f"{prefix} demo model done")
@@ -230,3 +234,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

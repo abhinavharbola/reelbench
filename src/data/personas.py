@@ -36,13 +36,25 @@ def curate_personas(
     active_users = sorted(activity["userId"].to_list())
 
     personas = []
+    used_users: set[int] = set()
     for name, target_genre in persona_definitions:
+        # excludes users already assigned to an earlier persona in this
+        # loop -- without this, a user whose history skews heavily toward
+        # two target genres at once (e.g. equally into Action and Sci-Fi)
+        # gets picked as the representative for both personas, and the
+        # promised "N distinct curated viewers" silently collapses to
+        # fewer distinct users. Confirmed with a synthetic user skewed
+        # toward two genres: without this guard the same user_id came back
+        # for both "The Action Fan" and "Sci-Fi Devotee".
         best_user, best_score = None, -1.0
         for uid in active_users:
+            if uid in used_users:
+                continue
             score = profiles.get(uid, {}).get(target_genre, 0.0)
             if score > best_score:
                 best_user, best_score = uid, score
         if best_user is not None:
+            used_users.add(best_user)
             top_genres = sorted(profiles[best_user].items(), key=lambda x: -x[1])[:3]
             personas.append({
                 "name": name,
@@ -51,3 +63,5 @@ def curate_personas(
                 "top_genres": [g for g, _ in top_genres],
             })
     return personas
+
+

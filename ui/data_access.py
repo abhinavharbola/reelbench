@@ -89,10 +89,11 @@ class EmbeddingRankerRecommender:
         candidates = self.retriever.query(user_vec, top_n=max(k * 5, 50))
 
         features = build_features_for_candidates(user_id, candidates, **feature_context, seen_items=seen_items)
-        ranked_ids = rank_candidates(self.ranker, features, top_k=k)
-
-        sim_lookup = dict(candidates)
-        return [(mid, sim_lookup.get(mid, 0.0)) for mid in ranked_ids]
+        # rank_candidates returns the ranker's own predicted score, which
+        # is what actually determined this order -- not the raw FAISS
+        # embedding similarity, which doesn't necessarily decrease
+        # monotonically down the ranked list (see ranker.py).
+        return rank_candidates(self.ranker, features, top_k=k)
 
 
 @st.cache_resource
@@ -170,3 +171,5 @@ def get_recommendations(model_name: str, user_id: int, k: int = 10) -> list[dict
             "score": score,
         })
     return out
+
+

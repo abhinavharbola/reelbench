@@ -37,7 +37,7 @@ def main():
 
     train_df = pl.read_parquet(args.train_path)
 
-    model, id_maps = train(
+    model, id_maps, config = train(
         train_df,
         checkpoint_path=args.checkpoint_path,
         epochs=args.epochs,
@@ -47,9 +47,16 @@ def main():
         embedding_dim=args.embedding_dim,
     )
 
+    # use config["max_seq_len"], not args.max_seq_len: if this run resumed
+    # from a checkpoint trained with a different --max-seq-len, train()
+    # silently uses the checkpoint's value internally, and exporting with
+    # the CLI arg instead would crash on a position_embedding shape
+    # mismatch (see src/models/sasrec.py's train() docstring/comment).
     sequences = build_user_sequences(train_df, id_maps)
-    export_embeddings(model, id_maps, sequences, args.output_dir, max_seq_len=args.max_seq_len)
+    export_embeddings(model, id_maps, sequences, args.output_dir, max_seq_len=config["max_seq_len"])
 
 
 if __name__ == "__main__":
     main()
+
+

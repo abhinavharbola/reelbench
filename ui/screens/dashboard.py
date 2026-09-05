@@ -133,3 +133,5 @@ def render():
         pl.col("model").map_elements(lambda m: MODEL_LABELS.get(m, m), return_dtype=pl.Utf8)
     ) if "model" in table.columns else table
     st.dataframe(display_table.to_pandas(), use_container_width=True, hide_index=True)
+
+

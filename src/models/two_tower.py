@@ -232,7 +232,17 @@ def export_embeddings(model: TwoTowerModel, id_maps: IdMaps, output_dir: Path, d
     item_df.write_parquet(output_dir / "two_tower_item_embeddings.parquet")
     print(f"exported {len(user_ids_sorted)} user and {len(item_ids_sorted)} item embeddings to {output_dir}")
 
+    # check both tables: a NaN item embedding is arguably worse than a NaN
+    # user embedding, since item embeddings all go into the shared FAISS
+    # index every user's query searches against, not just one user's query.
     n_nan_users = int(np.isnan(user_emb).any(axis=1).sum())
     if n_nan_users > 0:
         print(f"WARNING: {n_nan_users} of {len(user_ids_sorted)} exported user embeddings contain NaN. "
               f"Run scripts/check_embeddings_for_nan.py on the output to identify affected users.")
+
+    n_nan_items = int(np.isnan(item_emb).any(axis=1).sum())
+    if n_nan_items > 0:
+        print(f"WARNING: {n_nan_items} of {len(item_ids_sorted)} exported item embeddings contain NaN. "
+              f"Run scripts/check_embeddings_for_nan.py on the output to identify affected items.")
+
+

@@ -198,7 +198,7 @@ def train(
     max_seq_len: int = 50,
     embedding_dim: int = 64,
     device: str | None = None,
-) -> tuple[SASRec, IdMaps]:
+) -> tuple[SASRec, IdMaps, dict]:
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     resumed = load_checkpoint(checkpoint_path, device=device)
@@ -257,7 +257,16 @@ def train(
         ):
             pass
 
-    return model, id_maps
+    # return config alongside the model: if this call resumed from a
+    # checkpoint, max_seq_len above was overridden from the checkpoint's
+    # saved config and may not match the max_seq_len argument the caller
+    # passed in. Callers must use this returned config (not their own CLI
+    # arg) for export_embeddings(), or a resume with a mismatched
+    # --max-seq-len crashes export with "IndexError: index out of range
+    # in self" from position_embedding -- confirmed by reproducing a
+    # train(max_seq_len=8) checkpoint, then resuming with
+    # train(max_seq_len=50) and exporting with max_seq_len=50.
+    return model, id_maps, config
 
 
 def export_embeddings(
@@ -303,3 +312,13 @@ def export_embeddings(
     if n_nan_users > 0:
         print(f"WARNING: {n_nan_users} of {len(user_ids)} exported user embeddings contain NaN. "
               f"Run scripts/check_embeddings_for_nan.py on the output to identify affected users.")
+
+    # item embeddings all go into the shared FAISS index every user's
+    # query searches against, not just one user's query -- worth checking
+    # separately from the user-embedding check above.
+    n_nan_items = int(np.isnan(item_emb).any(axis=1).sum())
+    if n_nan_items > 0:
+        print(f"WARNING: {n_nan_items} of {len(item_ids_sorted)} exported item embeddings contain NaN. "
+              f"Run scripts/check_embeddings_for_nan.py on the output to identify affected items.")
+
+

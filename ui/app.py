@@ -63,3 +63,5 @@ elif screen == "Recommendations":
     recommendations.render()
 else:
     dashboard.render()
+
+

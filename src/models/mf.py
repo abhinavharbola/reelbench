@@ -76,3 +76,5 @@ class MatrixFactorizationModel:
             filter_already_liked_items=True,
         )
         return [self.idx_to_item_id[i] for i in item_indices]
+
+

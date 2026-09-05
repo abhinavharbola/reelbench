@@ -7,12 +7,12 @@ The evaluation comparison table is the centerpiece deliverable, not the model co
 ## Preview
 
 <p align="center">
-  <img src="images/main_ui.png" width="720" alt="Streamlit UI showing the persona selector with four curated viewers and a real-user-ID browser">
+  <img src="assets/main_ui.png" width="720" alt="Streamlit UI showing the persona selector with four curated viewers and a real-user-ID browser">
   <br>
   <sub><em>Main UI screen, curated personas (genre-profiled real users) or browse by any real MovieLens user ID.</em></sub>
 </p>
 
-Additional screenshots (`choose_viewer.png`, `recommendations.png`, `model_performace.png`) are in [`assets/`](assets/) using that name convention, one per dashboard view.
+Additional screenshots (`choose_viewer.png`, `recommendations.png`, `model_performance.png`) are in [`assets/`](assets/), one per dashboard view.
 
 ## What this is
 
@@ -61,11 +61,11 @@ flowchart TD
 
 | Approach | Library | Trained on | Notes |
 |---|---|---|---|
-| Popularity |, | CPU, local | Baseline floor; same ranked list for every user, filtered by what they've already seen. |
-| Item-Item CF | scipy sparse | CPU, local | Cosine similarity computed in row-blocks with a bounded top-K per item, a naive dense 40k×40k similarity matrix would exceed 15GB and blow the 16GB RAM budget. |
+| Popularity | - | CPU, local | Baseline floor; same ranked list for every user, filtered by what they've already seen. |
+| Item-Item CF | scipy sparse | CPU, local | Cosine similarity computed in row-blocks with a bounded top-K per item; a naive dense similarity matrix at ml-25m's full ~62k-item catalog would need ~15GB at float32 and blow the 16GB RAM budget. |
 | ALS / BPR | `implicit` | CPU, local | Matrix factorization; whichever of the two the run is configured for. |
 | Two-Tower | PyTorch | Colab/Kaggle GPU | User + item towers, in-batch negative sampling. Checkpointed every epoch, free-tier sessions can disconnect without warning, so training always resumes from the last saved epoch rather than assuming one uninterrupted run. |
-| SASRec | PyTorch | Colab/Kaggle GPU | Causal self-attention over each user's chronological sequence, next-item prediction. Same checkpoint-resume discipline as the two-tower model. Fixed masking bug (see below): the causal+padding mask used to produce NaN hidden states for any sequence shorter than `max_seq_len`, i.e. nearly every user. |
+| SASRec | PyTorch | Colab/Kaggle GPU | Causal self-attention over each user's chronological sequence, next-item prediction. Same checkpoint-resume discipline as the two-tower model. Fixed masking bug: the causal+padding mask used to produce NaN hidden states for any sequence shorter than `max_seq_len`, i.e. nearly every user. |
 
 ## Evaluation harness
 
@@ -80,7 +80,7 @@ Built and unit-tested (`tests/test_metrics.py`, `tests/test_split.py`) **before*
 
 A few specific failure modes this pipeline was built and tested to survive, not just handle in theory:
 
-- **RAM-safe item-item CF**, sparse similarity computed in row-blocks, top-K bounded per item, verified to stay under 200MB at 8k items / 112k interactions rather than the ~15GB a naive dense matrix would need at full catalog scale.
+- **RAM-safe item-item CF**, sparse similarity computed in row-blocks, top-K bounded per item. Measured with `scripts/benchmark_item_item_cf_memory.py` on synthetic interaction data at ml-25m's real catalog scale (62,423 items, 162,541 users, ~13.7M interactions): peak RSS delta during `fit()` is ~1.4GB, well under the 16GB budget and far below the ~15GB a naive dense 62k×62k similarity matrix would need at float32.
 - **Split leakage**, a single global timestamp cutoff, not a per-user-only split; unit-tested against a synthetic dataset specifically constructed so a per-user split would pass but a global-cutoff check would catch the leak.
 - **NaN embeddings degrade gracefully, everywhere**, a malformed embedding makes FAISS return zero search results for that one user. The ranker-training step skips that user instead of crashing a multi-million-row build; the live serving/UI query path returns an empty recommendation list instead of raising. Both paths verified against real injected-NaN data, not just reasoned about.
 - **Checkpoint resume**, both neural models save every epoch and resume from the last completed one on restart, including the embedding dimension and full ID-to-index mapping, so a resumed run can't silently reconstruct the model with mismatched shapes.
@@ -102,6 +102,11 @@ recsys-movielens/
 ├── data/
 │   ├── raw/                             # gitignored, MovieLens 25M CSVs
 │   └── processed/                       # gitignored, parquet artifacts
+│
+├── assets/                              # main_ui.png, choose_viewer.png, recommendations.png, model_performance.png
+│
+├── notebooks/
+│   └── recsys-movielens-notebook.ipynb  # Kaggle GPU training run log (two-tower, SASRec)
 │
 ├── src/
 │   ├── data/                            # ingestion, temporal split, persona curation
@@ -137,7 +142,8 @@ recsys-movielens/
 │   ├── run_cold_start.py                # Gemini batch embedding job
 │   ├── check_embeddings_for_nan.py      # diagnostic for embedding parquet files
 │   ├── reexport_sasrec_embeddings.py    # re-export from an existing checkpoint without retraining
-│   └── generate_demo_artifacts.py       # synthetic data, for UI development only
+│   ├── generate_demo_artifacts.py       # synthetic data, for UI development only
+│   └── benchmark_item_item_cf_memory.py # measures ItemItemCF.fit() peak RSS at ml-25m catalog scale
 │
 ├── tests/
 ├── results/                             # comparison table, committed
@@ -168,7 +174,7 @@ recsys-movielens/
 
 ```bash
 # Phase 1, ingest, split, evaluation harness, 3 CPU baselines
-python src/data/ingest
+python -m src.data.ingest
 python scripts/run_phase1.py
 python scripts/curate_personas.py
 
@@ -195,5 +201,8 @@ pytest tests/ -v
 
 ## Known limitations
 
-- **The committed comparison table currently scores the 3 CPU baselines only.** `run_phase1.py` evaluates popularity, item-item CF, and ALS/BPR through the harness and writes those 3 rows. The harness now *can* score the two-tower and SASRec retrieval+ranking pipeline too, `scripts/evaluate_pipeline_models.py` wraps each as a `recommend(user_id, k)` model (FAISS retrieval, seen-item exclusion, LightGBM re-rank) and appends harness-scored rows to `results/comparison_table.csv` the same way `run_phase1.py` does for the baselines. It just hasn't been run against a real trained two-tower/SASRec checkpoint in this repo state, since that requires Colab/Kaggle GPU time this environment doesn't have. Run `build_ui_artifacts.py` then `evaluate_pipeline_models.py` after training both neural models to populate all 5 rows.
+- **The committed `results/comparison_table.csv` is currently synthetic demo data, not a real MovieLens 25M evaluation.** Its 3 rows (popularity, item-item CF, ALS/BPR) were traced back to `scripts/generate_demo_artifacts.py` (400 synthetic users, 350 fictional movies, for UI development/screenshotting only) rather than `scripts/run_phase1.py` against a real ingested `ml-25m.zip`. This was confirmed by reverse-solving the coverage column: e.g. ALS's `coverage=0.5085714285714286` is exactly `178/350`, and `350` is `generate_demo_artifacts.py`'s synthetic catalog size, not ml-25m's real ~62k items; `item_item_cf` and `als` match that script's output to full floating-point precision on every column. To fix: delete `data/processed/models/*.pkl` and `results/comparison_table.csv`, place a real `ml-25m.zip` under `data/raw/`, run `python -m src.data.ingest` then `python scripts/run_phase1.py`. This does not require GPU/Colab/Kaggle.
+- **The two-tower and SASRec rows are not in the table yet**, independent of the above. The harness *can* score them: `scripts/evaluate_pipeline_models.py` wraps each as a `recommend(user_id, k)` model (FAISS retrieval, seen-item exclusion, LightGBM re-rank) and appends harness-scored rows to `results/comparison_table.csv` the same way `run_phase1.py` does for the baselines. Both neural models have been trained on Kaggle GPU (`notebooks/recsys-movielens-notebook.ipynb`, 10 epochs each, embeddings exported), but `build_ui_artifacts.py` and `evaluate_pipeline_models.py` haven't been run against those checkpoints in this repo state. To populate: run `build_ui_artifacts.py` followed by `evaluate_pipeline_models.py` against the real embeddings (no retraining needed if the checkpoint has no NaN parameters — see `scripts/reexport_sasrec_embeddings.py`).
 - **MovieLens 25M is a static, historical snapshot**, ratings stop at the dataset's collection date. The comparison table reflects relative model quality on that snapshot, not current catalog or taste trends.
+
+

@@ -66,15 +66,28 @@ def train_ranker(training_table: pl.DataFrame, num_boost_round: int = 200) -> lg
     return lgb.train(params, train_set, num_boost_round=num_boost_round)
 
 
-def rank_candidates(model: lgb.Booster, features: pl.DataFrame, top_k: int) -> list[int]:
+def rank_candidates(model: lgb.Booster, features: pl.DataFrame, top_k: int) -> list[tuple[int, float]]:
     """features: build_features_for_candidates() output for one user.
-    Returns movieIds ranked by predicted relevance, highest first."""
+    Returns [(movieId, model_score), ...] ranked by predicted relevance,
+    highest first.
+
+    Returns the ranker's own predicted score, not the raw
+    embedding_similarity feature that went into it -- the ranking order
+    comes from this LightGBM prediction (a combination of similarity,
+    popularity, recency, genre match, and user stats), so a caller that
+    displayed embedding_similarity as "the score" would show a value that
+    doesn't correspond to the order the list is actually sorted in. This
+    was previously an actual bug: src/serving/app.py and
+    ui/data_access.py both looked up embedding_similarity per movieId
+    after ranking and labeled it "score", which does not
+    necessarily decrease monotonically down the list."""
     if features.height == 0:
         return []
     X = features.select(FEATURE_COLUMNS).to_numpy()
     scores = model.predict(X)
     ranked = features.with_columns(pl.Series("score", scores)).sort("score", descending=True)
-    return ranked["movieId"].head(top_k).to_list()
+    top = ranked.head(top_k)
+    return list(zip(top["movieId"].to_list(), top["score"].to_list()))
 
 
 def save_model(model: lgb.Booster, path: Path) -> None:
@@ -84,3 +97,5 @@ def save_model(model: lgb.Booster, path: Path) -> None:
 
 def load_model(path: Path) -> lgb.Booster:
     return lgb.Booster(model_file=str(path))
+
+

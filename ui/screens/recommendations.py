@@ -119,3 +119,4 @@ def render():
             st.caption("No recommendations available for this user.")
         for rank, item in enumerate(recs, start=1):
             st.markdown(_render_movie_card(item, accent, rank), unsafe_allow_html=True)
+

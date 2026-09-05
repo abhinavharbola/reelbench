@@ -142,13 +142,12 @@ def recommend(req: RecommendationRequest):
         _state["item_genres"],
         seen_items=_state["seen_by_user"].get(req.user_id, set()),
     )
-    ranked_ids = rank_candidates(_state["ranker"], features, top_k=req.top_n)
+    ranked = rank_candidates(_state["ranker"], features, top_k=req.top_n)
 
     movies = _state["movies"]
-    scores_by_id = dict(zip(features["movieId"].to_list(), features["embedding_similarity"].to_list()))
 
     items = []
-    for movie_id in ranked_ids:
+    for movie_id, score in ranked:
         movie_row = movies.filter(pl.col("movieId") == movie_id)
         if movie_row.height == 0:
             continue
@@ -156,7 +155,7 @@ def recommend(req: RecommendationRequest):
             movie_id=movie_id,
             title=movie_row["title"][0],
             genres=movie_row["genres"][0],
-            score=scores_by_id.get(movie_id, 0.0),
+            score=score,
         ))
 
     return RecommendationResponse(user_id=req.user_id, recommendations=items)
@@ -198,3 +197,5 @@ def similar_items(movie_id: int, top_n: int = 10):
             break
 
     return SimilarItemsResponse(movie_id=movie_id, similar=items)
+
+

@@ -71,3 +71,5 @@ def build_and_save_index(item_embeddings_path: Path, index_output_path: Path) ->
     retriever.build(item_embeddings)
     retriever.save(index_output_path)
     print(f"FAISS index with {retriever.index.ntotal} items written to {index_output_path}")
+
+

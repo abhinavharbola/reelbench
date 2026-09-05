@@ -26,10 +26,17 @@ class PopularityModel:
         self._seen_by_user: dict[int, set] = {}
 
     def fit(self, train: pl.DataFrame) -> None:
+        # sort by (count desc, movieId asc): group_by() alone doesn't
+        # guarantee row order for ties, so without a secondary key here
+        # the relative rank of equally-popular movies changes from run to
+        # run on identical data, which silently shifts ndcg@k/map@k/
+        # diversity for any k beyond the point where counts stop being
+        # unique -- confirmed by running the same seeded pipeline twice
+        # and diffing the resulting comparison_table.csv.
         counts = (
             train.group_by("movieId")
             .agg(pl.len().alias("count"))
-            .sort("count", descending=True)
+            .sort(["count", "movieId"], descending=[True, False])
         )
         self.ranked_items = counts["movieId"].to_list()
         self._seen_by_user = (
@@ -142,5 +149,10 @@ class ItemItemCF:
                     continue
                 scores[neighbor_item] += sim
 
-        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        # secondary movieId tiebreak for the same determinism reason as
+        # PopularityModel.fit() above -- accumulated scores can tie exactly
+        # when two candidates share the same set of contributing neighbors.
+        ranked = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
         return [item for item, _ in ranked[:k]]
+
+

@@ -71,3 +71,4 @@ def render():
 
     if st.session_state.get("selected_user_id") is not None:
         st.success(f"Selected: {st.session_state.get('selected_label')}. Open the Recommendations screen from the sidebar.")
+
