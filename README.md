@@ -162,6 +162,11 @@ recsys-movielens/
    python -m venv venv && source venv/bin/activate      # Windows: venv\Scripts\Activate.ps1
    pip install -r requirements.txt
    ```
+   No GPU on your machine? `requirements.txt` pins `torch==2.4.1`, and a plain `pip install` pulls the full CUDA build by default, which is a large download and unnecessary for everything except *training* the two-tower/SASRec models from scratch (the "Phase 2/3, on Colab or Kaggle GPU" step below) — inference, evaluation, the UI, and the API all run fine on the CPU build. Install the CPU-only wheel instead, before or after the step above:
+   ```bash
+   pip install torch --index-url https://download.pytorch.org/whl/cpu
+   ```
+   If `pip install -r requirements.txt` pulls in the CUDA build anyway (it may not recognize the CPU wheel as satisfying the pin), just re-run the command above afterward to replace it.
 
 3. **Experiment tracking (optional)**: runs log to MLflow locally with zero configuration. To log to a Dagshub-hosted MLflow server instead:
    ```bash
@@ -204,5 +209,3 @@ pytest tests/ -v
 - **The committed `results/comparison_table.csv` is currently synthetic demo data, not a real MovieLens 25M evaluation.** Its 3 rows (popularity, item-item CF, ALS/BPR) were traced back to `scripts/generate_demo_artifacts.py` (400 synthetic users, 350 fictional movies, for UI development/screenshotting only) rather than `scripts/run_phase1.py` against a real ingested `ml-25m.zip`. This was confirmed by reverse-solving the coverage column: e.g. ALS's `coverage=0.5085714285714286` is exactly `178/350`, and `350` is `generate_demo_artifacts.py`'s synthetic catalog size, not ml-25m's real ~62k items; `item_item_cf` and `als` match that script's output to full floating-point precision on every column. To fix: delete `data/processed/models/*.pkl` and `results/comparison_table.csv`, place a real `ml-25m.zip` under `data/raw/`, run `python -m src.data.ingest` then `python scripts/run_phase1.py`. This does not require GPU/Colab/Kaggle.
 - **The two-tower and SASRec rows are not in the table yet**, independent of the above. The harness *can* score them: `scripts/evaluate_pipeline_models.py` wraps each as a `recommend(user_id, k)` model (FAISS retrieval, seen-item exclusion, LightGBM re-rank) and appends harness-scored rows to `results/comparison_table.csv` the same way `run_phase1.py` does for the baselines. Both neural models have been trained on Kaggle GPU (`notebooks/recsys-movielens-notebook.ipynb`, 10 epochs each, embeddings exported), but `build_ui_artifacts.py` and `evaluate_pipeline_models.py` haven't been run against those checkpoints in this repo state. To populate: run `build_ui_artifacts.py` followed by `evaluate_pipeline_models.py` against the real embeddings (no retraining needed if the checkpoint has no NaN parameters — see `scripts/reexport_sasrec_embeddings.py`).
 - **MovieLens 25M is a static, historical snapshot**, ratings stop at the dataset's collection date. The comparison table reflects relative model quality on that snapshot, not current catalog or taste trends.
-
-
