@@ -145,5 +145,3 @@ def assert_no_leakage(split: SplitResult) -> None:
     test_users = set(split.test["userId"].unique().to_list())
     if not test_users.issubset(train_users):
         raise AssertionError("test contains users absent from train")
-
-

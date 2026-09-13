@@ -16,14 +16,20 @@ Requires data/processed/interactions.parquet and movies.parquet to already
 exist (run src/data/ingest.py first, after placing the raw MovieLens 25M
 files in data/raw/ml-25m/).
 
-Note: this script only replaces the 3 rows it owns (popularity,
-item_item_cf, als). If results/comparison_table.csv already has
-two_tower/sasrec rows from evaluate_pipeline_models.py, those are kept as-is
--- this mirrors evaluate_pipeline_models.py's own merge-and-preserve
-behavior instead of the previous unconditional overwrite, which used to
-silently wipe out the two-tower/SASRec rows on any re-run of this script.
+Note: this script only replaces the rows it owns (popularity,
+item_item_cf, and whichever of als/bpr was just run). If
+results/comparison_table.csv already has two_tower/sasrec rows from
+evaluate_pipeline_models.py, those are kept as-is (see
+src.eval.results_table.upsert_results).
+
+The matrix-factorization method (ALS or BPR) is a CLI flag, not
+hardcoded: `--mf-method bpr` runs BPR instead of the default ALS.
+Whichever one you run is the one written to comparison_table.csv under
+its own name (an `als` row and a `bpr` row can coexist if you've run
+both; re-running one only replaces its own row).
 """
 
+import argparse
 import pickle
 import sys
 from pathlib import Path
@@ -34,6 +40,7 @@ import polars as pl
 
 from src.data.split import assert_no_leakage, temporal_split
 from src.eval.metrics import evaluate_all
+from src.eval.results_table import upsert_results
 from src.eval.tracking import log_model_run
 from src.models.baseline import ItemItemCF, PopularityModel
 from src.models.mf import MatrixFactorizationModel
@@ -44,7 +51,6 @@ MODELS_DIR = PROCESSED_DIR / "models"
 RESULTS_DIR = Path("results")
 K_VALUES = (10, 20)
 TOP_K_FOR_RECS = max(K_VALUES)
-BASELINE_MODEL_NAMES = ["popularity", "item_item_cf", "als"]
 
 
 def evaluate_model(name: str, model, test: pl.DataFrame, catalog_size: int, item_genres: dict) -> dict:
@@ -63,7 +69,17 @@ def evaluate_model(name: str, model, test: pl.DataFrame, catalog_size: int, item
     return metrics
 
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mf-method", choices=["als", "bpr"], default="als")
+    parser.add_argument("--mf-factors", type=int, default=64)
+    parser.add_argument("--mf-iterations", type=int, default=15)
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     interactions = pl.read_parquet(PROCESSED_DIR / "interactions.parquet")
     movies = pl.read_parquet(PROCESSED_DIR / "movies.parquet")
     item_genres = build_item_genre_map(movies)
@@ -105,32 +121,21 @@ def main():
         pickle.dump(cf, f)
     print("item-item CF done")
 
-    als = MatrixFactorizationModel(method="als", factors=64, iterations=15)
-    als.fit(split.train)
-    als_metrics = evaluate_model("als", als, split.test, catalog_size, item_genres)
-    results.append(als_metrics)
-    with log_model_run("als", params={"factors": 64, "iterations": 15}, metrics=als_metrics):
+    mf = MatrixFactorizationModel(method=args.mf_method, factors=args.mf_factors, iterations=args.mf_iterations)
+    mf.fit(split.train)
+    mf_metrics = evaluate_model(args.mf_method, mf, split.test, catalog_size, item_genres)
+    results.append(mf_metrics)
+    with log_model_run(args.mf_method, params={"factors": args.mf_factors, "iterations": args.mf_iterations}, metrics=mf_metrics):
         pass
-    with open(MODELS_DIR / "als.pkl", "wb") as f:
-        pickle.dump(als, f)
-    print("ALS done")
+    with open(MODELS_DIR / f"{args.mf_method}.pkl", "wb") as f:
+        pickle.dump(mf, f)
+    print(f"{args.mf_method.upper()} done")
 
     RESULTS_DIR.mkdir(exist_ok=True)
     table_path = RESULTS_DIR / "comparison_table.csv"
-    new_table = pl.DataFrame(results)
-    new_table = new_table.select(["model"] + [c for c in new_table.columns if c != "model"])
+    owned_models = ["popularity", "item_item_cf", args.mf_method]
+    combined = upsert_results(table_path, results, owned_models)
 
-    # merge-preserve, same pattern as evaluate_pipeline_models.py: replace
-    # only the 3 rows this script owns, keep any two_tower/sasrec rows
-    # already on disk instead of blowing the whole file away.
-    if table_path.exists():
-        existing = pl.read_csv(table_path)
-        existing = existing.filter(~pl.col("model").is_in(BASELINE_MODEL_NAMES))
-        combined = pl.concat([new_table, existing.select(new_table.columns)]) if existing.height > 0 else new_table
-    else:
-        combined = new_table
-
-    combined.write_csv(table_path)
     print(combined)
     print(f"\nwritten to {table_path}")
     print(f"models written to {MODELS_DIR}")
@@ -138,5 +143,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

@@ -18,14 +18,7 @@ import polars as pl
 import streamlit as st
 
 from src.data.split import build_user_seen_items
-from src.ranking.features import (
-    build_features_for_candidates,
-    build_item_genre_map,
-    build_user_genre_profiles,
-    compute_item_popularity,
-    compute_item_recency,
-    compute_user_stats,
-)
+from src.ranking.features import build_feature_context, build_features_for_candidates, build_item_genre_map
 from src.ranking.ranker import load_model as load_ranker_model
 from src.ranking.ranker import rank_candidates
 from src.retrieval.faiss_index import FaissRetriever
@@ -104,7 +97,12 @@ def load_model_registry() -> dict:
     trained and cached."""
     registry = {}
 
-    for name, filename in [("popularity", "popularity.pkl"), ("item_item_cf", "item_item_cf.pkl"), ("als", "als.pkl")]:
+    for name, filename in [
+        ("popularity", "popularity.pkl"),
+        ("item_item_cf", "item_item_cf.pkl"),
+        ("als", "als.pkl"),
+        ("bpr", "bpr.pkl"),
+    ]:
         path = MODELS_DIR / filename
         if path.exists():
             with open(path, "rb") as f:
@@ -115,17 +113,8 @@ def load_model_registry() -> dict:
     if train_path.exists() and movies_path.exists():
         train = pl.read_parquet(train_path)
         movies = pl.read_parquet(movies_path)
-        reference_ts = train.select(pl.col("timestamp").max()).item()
         item_genres = build_item_genre_map(movies)
-
-        feature_context = {
-            "item_popularity": compute_item_popularity(train),
-            "item_recency": compute_item_recency(train, reference_ts),
-            "user_stats": compute_user_stats(train, reference_ts),
-            "user_genre_profiles": build_user_genre_profiles(train, item_genres),
-            "item_genres": item_genres,
-        }
-        registry["_feature_context"] = feature_context
+        registry["_feature_context"] = build_feature_context(train, item_genres)
         # every user's full train history -- so the two embedding-based
         # models never recommend something the user has already watched,
         # matching popularity/item-item-CF/ALS which already exclude it
@@ -171,5 +160,3 @@ def get_recommendations(model_name: str, user_id: int, k: int = 10) -> list[dict
             "score": score,
         })
     return out
-
-

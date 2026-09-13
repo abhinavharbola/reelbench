@@ -244,5 +244,3 @@ def export_embeddings(model: TwoTowerModel, id_maps: IdMaps, output_dir: Path, d
     if n_nan_items > 0:
         print(f"WARNING: {n_nan_items} of {len(item_ids_sorted)} exported item embeddings contain NaN. "
               f"Run scripts/check_embeddings_for_nan.py on the output to identify affected items.")
-
-

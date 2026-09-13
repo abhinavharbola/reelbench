@@ -61,6 +61,7 @@ MODEL_COLORS = {
     "popularity": "#6E685C",
     "item_item_cf": "#3E6E86",
     "als": "#3F7A4F",
+    "bpr": "#5B8C63",
     "two_tower": "#B3242E",
     "sasrec": "#6B3F82",
 }
@@ -68,7 +69,8 @@ MODEL_COLORS = {
 MODEL_LABELS = {
     "popularity": "Popularity",
     "item_item_cf": "Item-Item CF",
-    "als": "ALS / BPR",
+    "als": "ALS",
+    "bpr": "BPR",
     "two_tower": "Two-Tower",
     "sasrec": "SASRec",
 }
@@ -550,4 +552,3 @@ span[data-baseweb="tag"] span {{
 }}
 </style>
 """
-

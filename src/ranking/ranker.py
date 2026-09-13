@@ -97,5 +97,3 @@ def save_model(model: lgb.Booster, path: Path) -> None:
 
 def load_model(path: Path) -> lgb.Booster:
     return lgb.Booster(model_file=str(path))
-
-

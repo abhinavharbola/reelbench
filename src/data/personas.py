@@ -63,5 +63,3 @@ def curate_personas(
                 "top_genres": [g for g, _ in top_genres],
             })
     return personas
-
-

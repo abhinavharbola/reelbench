@@ -56,5 +56,3 @@ def log_model_run(run_name: str, params: dict, metrics: dict, extra_config: dict
         }
         mlflow.log_metrics(numeric_metrics)
         yield run
-
-

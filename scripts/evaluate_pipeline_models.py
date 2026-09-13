@@ -40,15 +40,9 @@ import polars as pl
 
 from src.data.split import build_user_seen_items
 from src.eval.metrics import evaluate_all
+from src.eval.results_table import upsert_results
 from src.eval.tracking import log_model_run
-from src.ranking.features import (
-    build_features_for_candidates,
-    build_item_genre_map,
-    build_user_genre_profiles,
-    compute_item_popularity,
-    compute_item_recency,
-    compute_user_stats,
-)
+from src.ranking.features import build_feature_context, build_features_for_candidates, build_item_genre_map
 from src.ranking.ranker import load_model, rank_candidates
 from src.retrieval.faiss_index import FaissRetriever
 
@@ -135,14 +129,7 @@ def main():
 
     catalog_size = train["movieId"].n_unique()
     item_genres = build_item_genre_map(movies)
-    reference_ts = train.select(pl.col("timestamp").max()).item()
-    feature_context = {
-        "item_popularity": compute_item_popularity(train),
-        "item_recency": compute_item_recency(train, reference_ts),
-        "user_stats": compute_user_stats(train, reference_ts),
-        "user_genre_profiles": build_user_genre_profiles(train, item_genres),
-        "item_genres": item_genres,
-    }
+    feature_context = build_feature_context(train, item_genres)
     seen_by_user = build_user_seen_items(train)
 
     new_rows = []
@@ -160,24 +147,10 @@ def main():
         print("no pipeline models scored -- nothing to append.")
         return
 
-    existing = pl.read_csv(table_path) if table_path.exists() else pl.DataFrame()
-    new_table = pl.DataFrame(new_rows)
-    new_table = new_table.select(["model"] + [c for c in new_table.columns if c != "model"])
-
-    if existing.height > 0:
-        # replace any stale rows for the models just re-scored, keep everyone else
-        existing = existing.filter(~pl.col("model").is_in(MODEL_PREFIXES))
-        combined = pl.concat([existing, new_table.select(existing.columns)]) if existing.height > 0 else new_table
-    else:
-        combined = new_table
-
-    RESULTS_DIR.mkdir(exist_ok=True)
-    combined.write_csv(table_path)
+    combined = upsert_results(table_path, new_rows, MODEL_PREFIXES)
     print(combined)
     print(f"\nwritten to {table_path}")
 
 
 if __name__ == "__main__":
     main()
-
-

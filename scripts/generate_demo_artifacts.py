@@ -26,17 +26,10 @@ import numpy as np
 import polars as pl
 
 from src.data.personas import curate_personas
-from src.data.split import build_user_seen_items, carve_ranker_supervision_split, temporal_split
+from src.data.split import assert_no_leakage, build_user_seen_items, carve_ranker_supervision_split, temporal_split
 from src.models.baseline import ItemItemCF, PopularityModel
 from src.models.mf import MatrixFactorizationModel
-from src.ranking.features import (
-    build_features_for_candidates,
-    build_item_genre_map,
-    build_user_genre_profiles,
-    compute_item_popularity,
-    compute_item_recency,
-    compute_user_stats,
-)
+from src.ranking.features import build_feature_context, build_features_for_candidates, build_item_genre_map
 from src.ranking.ranker import build_training_table, save_model, train_ranker
 from src.retrieval.faiss_index import FaissRetriever
 from src.eval.metrics import evaluate_all
@@ -155,23 +148,28 @@ def main():
     item_ids = split.train["movieId"].unique().sort().to_list()
     user_ids = split.train["userId"].unique().sort().to_list()
 
-    reference_ts = split.train.select(pl.col("timestamp").max()).item()
-    feature_context = {
-        "item_popularity": compute_item_popularity(split.train),
-        "item_recency": compute_item_recency(split.train, reference_ts),
-        "user_stats": compute_user_stats(split.train, reference_ts),
-        "user_genre_profiles": build_user_genre_profiles(split.train, item_genres),
-        "item_genres": item_genres,
-    }
+    # eval-time features: full split.train is genuinely "known" as of the
+    # real split cutoff, so this is the correct reference dataframe for
+    # scoring MockRecommender below.
+    eval_feature_context = build_feature_context(split.train, item_genres)
 
     # ranker supervision: carved out of train only, mirrors
     # build_serving_artifacts.py / build_ui_artifacts.py, so this demo
     # script exercises the same leakage-safe path the real pipeline uses
     # instead of a demo-only shortcut that would drift from it.
     ranker_split = carve_ranker_supervision_split(split.train, val_quantile=0.8)
+    assert_no_leakage(ranker_split)
     ranker_seen_by_user = build_user_seen_items(ranker_split.train)
     ranker_positives = build_user_seen_items(ranker_split.test)
     full_seen_by_user = build_user_seen_items(split.train)
+
+    # ranker-training-time features: ranker_split.train only, strictly
+    # before ranker_split.test (the labels). ranker_split.test is a
+    # subset of split.train, so using split.train here would count each
+    # label interaction into the features describing the candidate it
+    # labels -- see src.ranking.features.build_feature_context's
+    # docstring for the full explanation of this leak.
+    ranker_feature_context = build_feature_context(ranker_split.train, item_genres)
 
     for prefix in ["two_tower", "sasrec"]:
         item_df, user_df = build_mock_neural_embeddings(als, item_ids, user_ids, dim=32)
@@ -187,7 +185,7 @@ def main():
             uvec = np.array(user_df.filter(pl.col("userId") == uid)["embedding"][0])
             candidates = retriever.query(uvec, top_n=30)
             per_user_features[uid] = build_features_for_candidates(
-                uid, candidates, **feature_context,
+                uid, candidates, **ranker_feature_context,
                 seen_items=ranker_seen_by_user.get(uid, set()),
             )
 
@@ -207,7 +205,7 @@ def main():
                 uvec = np.array(uid_series[0])
                 candidates = self.retriever.query(uvec, top_n=max(k * 3, 30))
                 feats = build_features_for_candidates(
-                    user_id, candidates, **feature_context,
+                    user_id, candidates, **eval_feature_context,
                     seen_items=full_seen_by_user.get(user_id, set()),
                 )
                 # recommend() must return list[item_id] per the harness
@@ -234,5 +232,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

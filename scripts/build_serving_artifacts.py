@@ -20,6 +20,21 @@ harness later scores it against. Candidates that a user has already seen
 them, matching how the other four approaches already behave; see
 src.ranking.features.build_features_for_candidates.
 
+The reference-point features (item popularity, item recency, user
+activity stats, genre profiles) are built from ranker_split.train, not
+the full outer train, and as of ranker_split.cutoff_timestamp, not
+train's own max timestamp (see src.ranking.features.build_feature_context).
+This fixes a real leak: ranker_split.test (the positive labels) is a
+subset of the full train, so computing these features from the full
+train counted each label interaction into the very features describing
+the candidate it labels -- e.g. item_popularity for a candidate could
+include the exact watch event being predicted, and item_recency could
+reflect that the item was watched at the label timestamp. Restricting
+the reference dataframe to ranker_split.train (strictly before the
+label window) keeps these features honest about what's actually known
+before each label, the same discipline temporal_split already applies
+at the outer train/test boundary.
+
 Cold start: run_cold_start.py caches Gemini text embeddings for every
 movie's title+genres, dimensionally incompatible with the two-tower's
 learned embedding space (no shared training signal ties the two spaces
@@ -41,14 +56,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import polars as pl
 
-from src.data.split import build_user_seen_items, carve_ranker_supervision_split
+from src.data.split import assert_no_leakage, build_user_seen_items, carve_ranker_supervision_split
 from src.ranking.features import (
+    build_feature_context,
     build_features_for_candidates,
     build_item_genre_map,
-    build_user_genre_profiles,
-    compute_item_popularity,
-    compute_item_recency,
-    compute_user_stats,
 )
 from src.ranking.ranker import build_training_table, save_model, train_ranker
 from src.retrieval.faiss_index import FaissRetriever, build_and_save_index
@@ -89,22 +101,19 @@ def main():
         print(f"no cold-start cache at {cold_start_path}, skipping content-similarity index "
               "(run scripts/run_cold_start.py to build it)")
 
-    reference_ts = train.select(pl.col("timestamp").max()).item()
     item_genres = build_item_genre_map(movies)
-    feature_context = {
-        "item_popularity": compute_item_popularity(train),
-        "item_recency": compute_item_recency(train, reference_ts),
-        "user_stats": compute_user_stats(train, reference_ts),
-        "user_genre_profiles": build_user_genre_profiles(train, item_genres),
-        "item_genres": item_genres,
-    }
 
     # ranker supervision: entirely in-train, test.parquet is never read here
     ranker_split = carve_ranker_supervision_split(train)
+    assert_no_leakage(ranker_split)  # hard stop if the inner split itself is broken
     ranker_seen_by_user = build_user_seen_items(ranker_split.train)
     ranker_positives = build_user_seen_items(ranker_split.test)
     print(f"ranker supervision split: {ranker_split.train.height:,} seen rows, "
           f"{ranker_split.test.height:,} label rows, cutoff {ranker_split.cutoff_timestamp}")
+
+    # built from ranker_split.train (not the full outer train) -- see the
+    # module docstring above and build_feature_context's own docstring
+    feature_context = build_feature_context(ranker_split.train, item_genres)
 
     user_emb_lookup = dict(zip(user_embeddings["userId"].to_list(), user_embeddings["embedding"].to_list()))
 
@@ -126,5 +135,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

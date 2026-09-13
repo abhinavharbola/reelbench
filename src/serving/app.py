@@ -16,14 +16,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from src.data.split import build_user_seen_items
-from src.ranking.features import (
-    build_features_for_candidates,
-    build_item_genre_map,
-    build_user_genre_profiles,
-    compute_item_popularity,
-    compute_item_recency,
-    compute_user_stats,
-)
+from src.ranking.features import build_feature_context, build_features_for_candidates, build_item_genre_map
 from src.ranking.ranker import load_model, rank_candidates
 from src.retrieval.faiss_index import FaissRetriever
 
@@ -52,8 +45,8 @@ def load_artifacts() -> None:
     user_embeddings = pl.read_parquet(ARTIFACTS_DIR / "two_tower_user_embeddings.parquet")
     user_emb_lookup = dict(zip(user_embeddings["userId"].to_list(), user_embeddings["embedding"].to_list()))
 
-    reference_timestamp = train.select(pl.col("timestamp").max()).item()
     item_genres = build_item_genre_map(movies)
+    feature_context = build_feature_context(train, item_genres)
 
     # optional: content-similarity index over cold-start (Gemini) item
     # embeddings, built by build_serving_artifacts.py if that cache
@@ -71,11 +64,7 @@ def load_artifacts() -> None:
         "retriever": retriever,
         "ranker": ranker,
         "user_emb_lookup": user_emb_lookup,
-        "item_popularity": compute_item_popularity(train),
-        "item_recency": compute_item_recency(train, reference_timestamp),
-        "user_stats": compute_user_stats(train, reference_timestamp),
-        "item_genres": item_genres,
-        "user_genre_profiles": build_user_genre_profiles(train, item_genres),
+        **feature_context,
         # every user's full train history, so /recommend never surfaces a
         # movie the user has already watched -- the other 4 approaches in
         # this project already do this internally, this brings the
@@ -197,5 +186,3 @@ def similar_items(movie_id: int, top_n: int = 10):
             break
 
     return SimilarItemsResponse(movie_id=movie_id, similar=items)
-
-

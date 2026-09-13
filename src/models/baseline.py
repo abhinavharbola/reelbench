@@ -154,5 +154,3 @@ class ItemItemCF:
         # when two candidates share the same set of contributing neighbors.
         ranked = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
         return [item for item, _ in ranked[:k]]
-
-

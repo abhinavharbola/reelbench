@@ -106,6 +106,49 @@ FEATURE_COLUMNS = [
 ]
 
 
+def build_feature_context(reference_df: pl.DataFrame, item_genres: dict[int, set], reference_timestamp: int | None = None) -> dict:
+    """Single entry point for building the dict of "reference point"
+    inputs build_features_for_candidates() needs (item_popularity,
+    item_recency, user_stats, user_genre_profiles, item_genres).
+
+    Callers must pass whichever interactions dataframe defines "what's
+    knowable as of the prediction point" for their use case, and this
+    computes reference_timestamp as that dataframe's own max timestamp
+    unless one is given explicitly:
+
+      - Serving / harness evaluation (src/serving/app.py,
+        scripts/evaluate_pipeline_models.py): pass the full outer
+        `train`. The prediction point is the real split cutoff, and
+        `train` is exactly what's known as of then.
+      - Ranker training (scripts/build_serving_artifacts.py,
+        scripts/build_ui_artifacts.py, scripts/generate_demo_artifacts.py):
+        pass `ranker_split.train` (the *inner*, pre-label slice from
+        carve_ranker_supervision_split), not the full outer `train`.
+        The ranker's positive labels are drawn from a later slice of
+        `train` (`ranker_split.test`); computing popularity/recency/user
+        stats from the full `train` would count those exact label rows
+        into the features describing the candidates they label, i.e.
+        leak the label into the input. Using only `ranker_split.train`
+        (and its cutoff as the reference timestamp) keeps the ranker's
+        training-time features honest about what's genuinely "past" at
+        the point each label is being predicted, mirroring how
+        temporal_split treats the outer train/test boundary.
+
+    One function used by every caller so this distinction can't
+    silently drift back apart between the serving, UI, and demo
+    scripts.
+    """
+    if reference_timestamp is None:
+        reference_timestamp = reference_df.select(pl.col("timestamp").max()).item()
+    return {
+        "item_popularity": compute_item_popularity(reference_df),
+        "item_recency": compute_item_recency(reference_df, reference_timestamp),
+        "user_stats": compute_user_stats(reference_df, reference_timestamp),
+        "user_genre_profiles": build_user_genre_profiles(reference_df, item_genres),
+        "item_genres": item_genres,
+    }
+
+
 def build_features_for_candidates(
     user_id: int,
     candidates: list[tuple[int, float]],  # [(movieId, embedding_similarity), ...] from FAISS
@@ -149,5 +192,3 @@ def build_features_for_candidates(
             "genre_match": genre_match_score(profile, item_genres.get(movie_id, set())),
         })
     return pl.DataFrame(rows)
-
-

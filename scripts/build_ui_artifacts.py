@@ -17,6 +17,13 @@ stale FAISS indices built from old embeddings will raise a FAISS
 dimension-mismatch assertion if queried with vectors of a different size
 than what the index was built with.
 
+Reference-point features (popularity, recency, user stats, genre
+profiles) for ranker training are built from ranker_split.train, not the
+full outer train -- see src.ranking.features.build_feature_context's
+docstring for why: the full train contains ranker_split.test (the
+positive labels), so computing these features from it would leak each
+label interaction into the features describing the candidate it labels.
+
 Usage:
     python scripts/build_ui_artifacts.py
 """
@@ -28,15 +35,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import polars as pl
 
-from src.data.split import build_user_seen_items, carve_ranker_supervision_split
-from src.ranking.features import (
-    build_features_for_candidates,
-    build_item_genre_map,
-    build_user_genre_profiles,
-    compute_item_popularity,
-    compute_item_recency,
-    compute_user_stats,
-)
+from src.data.split import assert_no_leakage, build_user_seen_items, carve_ranker_supervision_split
+from src.ranking.features import build_feature_context, build_features_for_candidates, build_item_genre_map
 from src.ranking.ranker import build_training_table, save_model, train_ranker
 from src.retrieval.faiss_index import FaissRetriever
 
@@ -94,23 +94,19 @@ def main():
     train = pl.read_parquet(train_path)
     movies = pl.read_parquet(movies_path)
 
-    reference_ts = train.select(pl.col("timestamp").max()).item()
     item_genres = build_item_genre_map(movies)
-    feature_context = {
-        "item_popularity": compute_item_popularity(train),
-        "item_recency": compute_item_recency(train, reference_ts),
-        "user_stats": compute_user_stats(train, reference_ts),
-        "user_genre_profiles": build_user_genre_profiles(train, item_genres),
-        "item_genres": item_genres,
-    }
 
     # ranker supervision: entirely in-train, mirrors build_serving_artifacts.py.
     # test.parquet is never read by this script.
     ranker_split = carve_ranker_supervision_split(train)
+    assert_no_leakage(ranker_split)  # hard stop if the inner split itself is broken
     ranker_seen_by_user = build_user_seen_items(ranker_split.train)
     ranker_positives = build_user_seen_items(ranker_split.test)
     print(f"ranker supervision split: {ranker_split.train.height:,} seen rows, "
           f"{ranker_split.test.height:,} label rows, cutoff {ranker_split.cutoff_timestamp}")
+
+    # built from ranker_split.train (not the full outer train), see module docstring
+    feature_context = build_feature_context(ranker_split.train, item_genres)
 
     built_any = False
     for prefix in MODEL_PREFIXES:
@@ -126,5 +122,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-

@@ -150,4 +150,3 @@ def render_model_chip(model_name: str, label: str) -> str:
         f'<span style="font-family:\'IBM Plex Mono\',monospace; font-size:0.74rem; color:{COLORS["text_muted"]};">{label}</span>'
         f'</span>'
     )
-

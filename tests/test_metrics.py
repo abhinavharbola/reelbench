@@ -84,5 +84,3 @@ def test_intra_list_diversity_disjoint_genres_is_one():
 
 def test_intra_list_diversity_single_item_is_zero():
     assert intra_list_diversity(["m1"], {"m1": {"Action"}}) == 0.0
-
-
