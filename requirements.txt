@@ -21,8 +21,8 @@ faiss-cpu==1.9.0
 # --- Ranking ---
 lightgbm==4.5.0
 
-# --- Cold start (batch, cached, not live) ---
-google-generativeai==0.8.3
+# --- Cold start (batch, cached, not live, runs locally) ---
+sentence-transformers==3.3.1
 
 # --- Serving ---
 fastapi==0.115.0

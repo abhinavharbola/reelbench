@@ -35,8 +35,9 @@ label window) keeps these features honest about what's actually known
 before each label, the same discipline temporal_split already applies
 at the outer train/test boundary.
 
-Cold start: run_cold_start.py caches Gemini text embeddings for every
-movie's title+genres, dimensionally incompatible with the two-tower's
+Cold start: run_cold_start.py caches local text embeddings (Qwen3-Embedding-0.6B
+via sentence-transformers) for every movie's title+genres, dimensionally
+incompatible with the two-tower's
 learned embedding space (no shared training signal ties the two spaces
 together), so they can't be merged into the main item FAISS index. Instead
 this builds a second, standalone FAISS index purely over the cold-start

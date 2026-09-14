@@ -49,7 +49,7 @@ flowchart TD
     faiss --> seen[exclude user's\nseen items]
     seen --> ranker[LightGBM ranker\nsimilarity + recency + popularity\n+ user stats + genre match]
 
-    coldstart[Gemini cold-start batch\ncached parquet, offline only] --> csfaiss[FAISS content index\nseparate from the two-tower index,\nincompatible embedding spaces]
+    coldstart[Local cold-start batch\nQwen3-Embedding-0.6B, offline only] --> csfaiss[FAISS content index\nseparate from the two-tower index,\nincompatible embedding spaces]
     csfaiss -->|/similar endpoint| api
 
     ranker --> api[FastAPI\nCPU, cached artifacts only]
@@ -88,7 +88,7 @@ A few specific failure modes this pipeline was built and tested to survive, not 
 
 ## Cold start
 
-A one-time batch job embeds movie titles + genres with Gemini's free-tier embedding API, cached to parquet. **Never called live at serving time**, this is a cached artifact, produced once, offline.
+A one-time batch job embeds movie titles + genres locally with `Qwen3-Embedding-0.6B` via `sentence-transformers`, cached to parquet. **Never called live at serving time**, this is a cached artifact, produced once, offline. No API key, no rate limits, no daily quota, and no ongoing external dependency -- the model weights (~1.2GB) download once from Hugging Face on first run, then everything is local. Runs fine on CPU; `scripts/run_cold_start.py` prints a throughput estimate after the first batch so you know roughly how long the full ~62k-item ml-25m catalog will take before committing to the run, and it's resumable (skips movieIds already cached) if interrupted.
 
 These content embeddings live in a completely different vector space than the two-tower/SASRec learned embeddings, nothing ties the two spaces together, so they can't be merged into the main retrieval FAISS index. Instead `build_serving_artifacts.py` builds a second, standalone FAISS index purely over the cold-start embeddings, and `src/serving/app.py` exposes it as `GET /similar/{movie_id}`, a content-based "more like this" lookup that works even for items with too little interaction history for a meaningful two-tower embedding.
 
@@ -140,7 +140,7 @@ recsys-movielens/
 │   ├── build_ui_artifacts.py            # per-model FAISS + ranker for the UI's 5-way comparison
 │   ├── evaluate_pipeline_models.py      # scores two-tower/SASRec through the harness
 │   ├── curate_personas.py               # picks real users for the UI's curated personas
-│   ├── run_cold_start.py                # Gemini batch embedding job
+│   ├── run_cold_start.py                # local batch embedding job
 │   ├── check_embeddings_for_nan.py      # diagnostic for embedding parquet files
 │   ├── reexport_sasrec_embeddings.py    # re-export from an existing checkpoint without retraining
 │   ├── generate_demo_artifacts.py       # synthetic data, for UI development only
@@ -197,7 +197,7 @@ uvicorn src.serving.app:app --reload         # POST /recommend {"user_id": 1, "t
 streamlit run ui/app.py
 
 # Optional
-python scripts/run_cold_start.py --api-key YOUR_GEMINI_KEY
+python scripts/run_cold_start.py
 pytest tests/ -v
 ```
 
