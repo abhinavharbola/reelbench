@@ -2,8 +2,9 @@
 Builds the production serving artifacts that src/serving/app.py depends on
 at startup: a FAISS index over the two-tower item embeddings, and a
 LightGBM ranker trained on top of retrieval candidates. Also builds a
-separate content-similarity index over cold-start (Gemini) item embeddings,
-if that cache exists -- see the "cold start" note below.
+separate content-similarity index over cold-start (local Qwen3-Embedding-0.6B,
+via sentence-transformers) item embeddings, if that cache exists -- see the
+"cold start" note below.
 
 The two-tower model is the designated production path (FastAPI serves one
 approach; the Streamlit UI separately compares all 5 for demo purposes).

@@ -48,10 +48,11 @@ def load_artifacts() -> None:
     item_genres = build_item_genre_map(movies)
     feature_context = build_feature_context(train, item_genres)
 
-    # optional: content-similarity index over cold-start (Gemini) item
-    # embeddings, built by build_serving_artifacts.py if that cache
-    # exists. A separate index, not merged with the two-tower one -- the
-    # two embedding spaces have no shared dimension or training signal.
+    # optional: content-similarity index over cold-start (local
+    # Qwen3-Embedding-0.6B, via sentence-transformers) item embeddings,
+    # built by build_serving_artifacts.py if that cache exists. A
+    # separate index, not merged with the two-tower one -- the two
+    # embedding spaces have no shared dimension or training signal.
     cold_start_index_path = ARTIFACTS_DIR / "faiss_index" / "cold_start_items.index"
     cold_start_retriever = None
     if cold_start_index_path.exists():
