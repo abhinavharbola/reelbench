@@ -49,8 +49,8 @@ flowchart TD
     faiss --> seen[exclude user's\nseen items]
     seen --> ranker[LightGBM ranker\nsimilarity + recency + popularity\n+ user stats + genre match]
 
-    coldstart[Local cold-start batch\nQwen3-Embedding-0.6B, offline only] --> csfaiss[FAISS content index\nseparate from the two-tower index,\nincompatible embedding spaces]
-    csfaiss -->|/similar endpoint| api
+    coldstart[Local cold-start batch, optional\nQwen3-Embedding-0.6B, offline only] --> csfaiss[FAISS content index\nseparate from the two-tower index,\nincompatible embedding spaces]
+    csfaiss -->|/similar endpoint, 404 if skipped| api
 
     ranker --> api[FastAPI\nCPU, cached artifacts only]
     ranker --> ui[Streamlit UI\nall 5 approaches, cached artifacts only]
@@ -69,7 +69,7 @@ flowchart TD
 
 ## Evaluation harness
 
-Built and unit-tested (`tests/test_metrics.py`, `tests/test_split.py`) **before any model**, per the project build order. Every downstream approach is evaluated against this same harness—never a model-specific variant.
+Built and unit-tested (`tests/test_metrics.py`, `tests/test_split.py`, `tests/test_ranking_features.py`) **before any model**, per the project build order. Every downstream approach is evaluated against this same harness—never a model-specific variant.
 
 - **Metrics:** Recall@10/20, NDCG@10/20, MAP@10/20, catalog coverage, intra-list diversity.
 - **Protocol:** Leave-last-N-out per user, bounded by one global timestamp cutoff. `assert_no_leakage()` hard-fails if any train row is at/after the cutoff or any test user is absent from train, before any model sees the split.
@@ -83,13 +83,15 @@ A few specific failure modes this pipeline was built and tested to survive, not 
 
 - **RAM-safe item-item CF:** Sparse similarity is computed in row-blocks with top-K bounded per item. On synthetic ML-25M-scale data (62,423 items, 162,541 users, \~13.7M interactions), `fit()` peaks at \~1.4GB RSS—well below the 16GB budget and far below the \~15GB required by a dense 62k×62k float32 matrix.
 - **Leakage-safe split:** Uses one global timestamp cutoff, not per-user-only splitting. Unit-tested on a dataset designed so a per-user split passes while the global-cutoff check catches the leak.
-- **NaN-safe embeddings:** Malformed embeddings cause FAISS to return zero results for that user. Ranker training skips the affected user; serving/UI returns an empty recommendation list instead of failing. Both paths are verified with injected NaNs.
+- **NaN-safe embeddings:** Malformed embeddings cause FAISS to return zero results for that user. Ranker training skips the affected user; serving/UI returns an empty recommendation list instead of failing. Both paths are verified with injected NaNs. `scripts/check_embeddings_for_nan.py <path>` scans an embedding parquet directly, without a full pipeline run, to find affected rows.
 - **Checkpoint resume:** Both neural models checkpoint every epoch and resume from the last completed epoch, including embedding dimension and the full ID-to-index mapping, preventing silent shape or index mismatches.
+- **SASRec masking-bug recovery:** If an existing `sasrec.pt` checkpoint's weights are healthy but were exported before the mask fix, `scripts/reexport_sasrec_embeddings.py` re-exports from that checkpoint with the fixed `forward()`, no retraining needed. If training itself already produced NaN parameters, the checkpoint is corrupted and needs a full retrain instead; the script's docstring shows how to check which case you're in.
 
 ## Cold start
 
 - **Offline, cached embeddings:** Movie titles + genres are embedded once locally with `Qwen3-Embedding-0.6B` via `sentence-transformers` and cached to Parquet. Serving never calls the model. Weights (\~1.2GB) download once from Hugging Face; after that, there are no API keys, rate limits, quotas, or external runtime dependencies. CPU is supported, and `scripts/run_cold_start.py` reports throughput after the first batch and resumes by skipping already-cached movieIds.
 - **Isolated retrieval space:** Content embeddings are independent of the two-tower/SASRec embedding spaces and cannot be merged into the main retrieval FAISS index. `build_serving_artifacts.py` therefore builds a separate FAISS index for cold-start embeddings, exposed by `src/serving/app.py` as `GET /similar/{movie_id}`—a content-based “more like this” path for items lacking enough interaction history for meaningful learned embeddings.
+- **Optional, and order matters:** `build_serving_artifacts.py` skips the cold-start index silently if `data/processed/cold_start_embeddings.parquet` doesn't exist yet—it's not a hard failure. But that means `run_cold_start.py` has to run **before** `build_serving_artifacts.py` for `/similar` to work. If you run it later, rerun `build_serving_artifacts.py` (and `build_ui_artifacts.py`, if you want the UI's cold-start path too) to pick up the new cache. Until then, `/similar/{movie_id}` returns a 404 telling you to do exactly that.
 
 ## Serving
 
@@ -98,7 +100,7 @@ FastAPI (production path: two-tower + ranker) and the Streamlit UI (all 5 approa
 ## Project Structure
 
 ```
-recsys-movielens/
+reelbench/
 ├── data/
 │   ├── raw/                             # gitignored, MovieLens 25M CSVs
 │   └── processed/                       # also gitignored, parquet artifacts
@@ -106,7 +108,7 @@ recsys-movielens/
 ├── assets/                              # images and screenshots
 │
 ├── notebooks/
-│   └── recsys-movielens-notebook.ipynb  # Kaggle GPU training run log (two-tower, SASRec)
+│   └── reelbench-notebook.ipynb         # Kaggle GPU training run log (two-tower, SASRec)
 │
 ├── src/
 │   ├── data/                            # ingestion, temporal split, persona curation
@@ -196,15 +198,21 @@ Phase 4, retrieval + ranking artifacts, serving, UI
 ```bash
 python scripts/build_serving_artifacts.py    # FastAPI's single production path
 python scripts/build_ui_artifacts.py         # per-model artifacts for the UI's 5-way comparison
-python scripts/evaluate_pipeline_models.py   # scores two-tower/SASRec through the harness, appends to results/comparison_table.csv
-uvicorn src.serving.app:app --reload         # POST /recommend {"user_id": 1, "top_n": 10}, GET /similar/{movie_id}
+python scripts/evaluate_pipeline_models.py   # scores two-tower/SASRec via build_ui_artifacts.py's artifacts, appends to results/comparison_table.csv
+uvicorn src.serving.app:app --reload         # GET /health, POST /recommend {"user_id": 1, "top_n": 10}, GET /similar/{movie_id}
 streamlit run ui/app.py
 ```
 
 Optional steps
 ```bash
-python scripts/run_cold_start.py
+python scripts/run_cold_start.py             # run before build_serving_artifacts.py, or rerun it after, to enable /similar
 pytest tests/ -v
+```
+
+Diagnostics, as needed
+```bash
+python scripts/check_embeddings_for_nan.py data/processed/sasrec_user_embeddings.parquet
+python scripts/reexport_sasrec_embeddings.py --checkpoint-path data/processed/checkpoints/sasrec.pt
 ```
 
 ## Evaluation
