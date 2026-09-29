@@ -81,7 +81,7 @@ Built and unit-tested (`tests/test_metrics.py`, `tests/test_split.py`, `tests/te
 
 A few specific failure modes this pipeline was built and tested to survive, not just handle in theory:
 
-- **RAM-safe item-item CF:** Sparse similarity is computed in row-blocks with top-K bounded per item. On synthetic ML-25M-scale data (62,423 items, 162,541 users, \~13.7M interactions), `fit()` peaks at \~1.4GB RSS—well below the 16GB budget and far below the \~15GB required by a dense 62k×62k float32 matrix.
+- **RAM-safe item-item CF:** Sparse similarity is computed in row-blocks with top-K bounded per item. On MovieLens 25M data (62,423 items, 162,541 users, \~13.7M interactions), `fit()` peaks at \~1.4GB RSS—well below the 16GB budget and far below the \~15GB required by a dense 62k×62k float32 matrix.
 - **Leakage-safe split:** Uses one global timestamp cutoff, not per-user-only splitting. Unit-tested on a dataset designed so a per-user split passes while the global-cutoff check catches the leak.
 - **NaN-safe embeddings:** Malformed embeddings cause FAISS to return zero results for that user. Ranker training skips the affected user; serving/UI returns an empty recommendation list instead of failing. Both paths are verified with injected NaNs. `scripts/check_embeddings_for_nan.py <path>` scans an embedding parquet directly, without a full pipeline run, to find affected rows.
 - **Checkpoint resume:** Both neural models checkpoint every epoch and resume from the last completed epoch, including embedding dimension and the full ID-to-index mapping, preventing silent shape or index mismatches.
