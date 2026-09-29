@@ -1,34 +1,3 @@
-"""
-Phase 1 runner: ingest -> temporal split -> fit popularity, item-item CF,
-ALS/BPR -> evaluate all three through the identical harness -> write
-results/comparison_table.csv.
-
-Also persists the artifacts downstream phases depend on:
-  - data/processed/train.parquet, read by train_two_tower.py, train_sasrec.py,
-    src/serving/app.py, and the Streamlit UI's data access layer.
-  - data/processed/models/{popularity,item_item_cf,als}.pkl, read by the
-    Streamlit UI's model registry for the 5-way comparison screen.
-
-Usage:
-    python scripts/run_phase1.py
-
-Requires data/processed/interactions.parquet and movies.parquet to already
-exist (run src/data/ingest.py first, after placing the raw MovieLens 25M
-files in data/raw/ml-25m/).
-
-Note: this script only replaces the rows it owns (popularity,
-item_item_cf, and whichever of als/bpr was just run). If
-results/comparison_table.csv already has two_tower/sasrec rows from
-evaluate_pipeline_models.py, those are kept as-is (see
-src.eval.results_table.upsert_results).
-
-The matrix-factorization method (ALS or BPR) is a CLI flag, not
-hardcoded: `--mf-method bpr` runs BPR instead of the default ALS.
-Whichever one you run is the one written to comparison_table.csv under
-its own name (an `als` row and a `bpr` row can coexist if you've run
-both; re-running one only replaces its own row).
-"""
-
 import argparse
 import pickle
 import sys
@@ -83,19 +52,15 @@ def main():
     interactions = pl.read_parquet(PROCESSED_DIR / "interactions.parquet")
     movies = pl.read_parquet(PROCESSED_DIR / "movies.parquet")
     item_genres = build_item_genre_map(movies)
-    catalog_size = interactions["movieId"].n_unique()
 
     split = temporal_split(interactions)
-    assert_no_leakage(split)  # hard stop if the harness itself is broken
+    assert_no_leakage(split)
+    catalog_size = split.train["movieId"].n_unique()
     print(f"train: {split.train.height:,} rows, test: {split.test.height:,} rows, "
-          f"cutoff: {split.cutoff_timestamp}")
+          f"cutoff: {split.cutoff_timestamp}, catalog size: {catalog_size:,}")
 
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    # persisted here, not just held in memory: train_two_tower.py,
-    # train_sasrec.py, src/serving/app.py, and the Streamlit UI all read
-    # this same file, so every downstream phase trains/serves on the exact
-    # same split the comparison table was scored against.
     split.train.write_parquet(PROCESSED_DIR / "train.parquet")
     split.test.write_parquet(PROCESSED_DIR / "test.parquet")
 
