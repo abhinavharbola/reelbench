@@ -1,11 +1,3 @@
-"""
-Curates named personas from the real trained data (not the demo dataset).
-Run after scripts/run_phase1.py, since it reads data/processed/train.parquet.
-
-Usage:
-    python scripts/curate_personas.py
-"""
-
 import json
 import sys
 from pathlib import Path
@@ -14,9 +6,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import polars as pl
 
+from src.config import DATA_DIR
 from src.data.personas import curate_personas
-
-DATA_DIR = Path("data/processed")
 
 
 def main():
