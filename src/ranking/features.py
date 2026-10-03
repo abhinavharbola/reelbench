@@ -1,13 +1,3 @@
-"""
-Feature engineering for the LightGBM re-ranker. Features, per the project
-spec: embedding similarity, recency, popularity, user stats, genre match.
-
-All "reference point" features (recency, popularity, user stats) are
-computed from train only, as of the split cutoff -- never from test, since
-the ranker itself is evaluated through the same harness as every other
-approach and must not see future information either.
-"""
-
 import math
 from collections import Counter
 
@@ -20,19 +10,14 @@ def compute_item_popularity(train: pl.DataFrame) -> dict[int, int]:
 
 
 def compute_item_recency(train: pl.DataFrame, reference_timestamp: int) -> dict[int, float]:
-    """days since each item's most recent train interaction, relative to
-    reference_timestamp (the split cutoff) -- smaller = more currently
-    trending, larger = older/evergreen."""
     last_ts = train.group_by("movieId").agg(pl.col("timestamp").max().alias("last_ts"))
     out = {}
     for movie_id, ts in zip(last_ts["movieId"].to_list(), last_ts["last_ts"].to_list()):
-        out[movie_id] = max(reference_timestamp - ts, 0) / 86400.0  # seconds -> days
+        out[movie_id] = max(reference_timestamp - ts, 0) / 86400.0
     return out
 
 
 def compute_user_stats(train: pl.DataFrame, reference_timestamp: int) -> dict[int, dict]:
-    """Per-user activity features: interaction count and days since last
-    train interaction (how recently active the user was)."""
     agg = train.group_by("userId").agg(
         pl.len().alias("n_interactions"),
         pl.col("timestamp").max().alias("last_ts"),
@@ -50,15 +35,6 @@ NO_GENRES_SENTINEL = "(no genres listed)"
 
 
 def build_item_genre_map(movies: pl.DataFrame) -> dict[int, set]:
-    """movieId -> set of genre strings.
-
-    MovieLens marks items with no genre data using the literal string
-    "(no genres listed)", not an empty string. Without special-casing it,
-    every such item gets treated as belonging to a fake genre category
-    called "(no genres listed)", which quietly skews genre_match_score and
-    intra_list_diversity for those items. Both an empty string and the
-    sentinel map to an empty genre set.
-    """
     out = {}
     for row in movies.iter_rows(named=True):
         genres = row["genres"]
@@ -70,8 +46,6 @@ def build_item_genre_map(movies: pl.DataFrame) -> dict[int, set]:
 
 
 def build_user_genre_profiles(train: pl.DataFrame, item_genres: dict[int, set]) -> dict[int, Counter]:
-    """Normalized genre-preference distribution per user, from their train
-    interaction history."""
     by_user = train.group_by("userId").agg(pl.col("movieId")).to_dict(as_series=False)
     profiles = {}
     for uid, items in zip(by_user["userId"], by_user["movieId"]):
@@ -88,9 +62,6 @@ def build_user_genre_profiles(train: pl.DataFrame, item_genres: dict[int, set]) 
 
 
 def genre_match_score(user_profile: Counter, item_genre_set: set) -> float:
-    """Sum of the user's preference weight across the candidate item's
-    genres, normalized by genre count -- higher = item's genres line up
-    with what the user has historically watched."""
     if not item_genre_set:
         return 0.0
     return sum(user_profile.get(g, 0.0) for g in item_genre_set) / len(item_genre_set)
@@ -107,37 +78,6 @@ FEATURE_COLUMNS = [
 
 
 def build_feature_context(reference_df: pl.DataFrame, item_genres: dict[int, set], reference_timestamp: int | None = None) -> dict:
-    """Single entry point for building the dict of "reference point"
-    inputs build_features_for_candidates() needs (item_popularity,
-    item_recency, user_stats, user_genre_profiles, item_genres).
-
-    Callers must pass whichever interactions dataframe defines "what's
-    knowable as of the prediction point" for their use case, and this
-    computes reference_timestamp as that dataframe's own max timestamp
-    unless one is given explicitly:
-
-      - Serving / harness evaluation (src/serving/app.py,
-        scripts/evaluate_pipeline_models.py): pass the full outer
-        `train`. The prediction point is the real split cutoff, and
-        `train` is exactly what's known as of then.
-      - Ranker training (scripts/build_serving_artifacts.py,
-        scripts/build_ui_artifacts.py, scripts/generate_demo_artifacts.py):
-        pass `ranker_split.train` (the *inner*, pre-label slice from
-        carve_ranker_supervision_split), not the full outer `train`.
-        The ranker's positive labels are drawn from a later slice of
-        `train` (`ranker_split.test`); computing popularity/recency/user
-        stats from the full `train` would count those exact label rows
-        into the features describing the candidates they label, i.e.
-        leak the label into the input. Using only `ranker_split.train`
-        (and its cutoff as the reference timestamp) keeps the ranker's
-        training-time features honest about what's genuinely "past" at
-        the point each label is being predicted, mirroring how
-        temporal_split treats the outer train/test boundary.
-
-    One function used by every caller so this distinction can't
-    silently drift back apart between the serving, UI, and demo
-    scripts.
-    """
     if reference_timestamp is None:
         reference_timestamp = reference_df.select(pl.col("timestamp").max()).item()
     return {
@@ -151,7 +91,7 @@ def build_feature_context(reference_df: pl.DataFrame, item_genres: dict[int, set
 
 def build_features_for_candidates(
     user_id: int,
-    candidates: list[tuple[int, float]],  # [(movieId, embedding_similarity), ...] from FAISS
+    candidates: list[tuple[int, float]],
     item_popularity: dict[int, int],
     item_recency: dict[int, float],
     user_stats: dict[int, dict],
@@ -159,20 +99,6 @@ def build_features_for_candidates(
     item_genres: dict[int, set],
     seen_items: set[int] | None = None,
 ) -> pl.DataFrame:
-    """One row per candidate item for this user, columns = FEATURE_COLUMNS
-    (plus userId/movieId for bookkeeping). log1p on popularity/recency to
-    tame long-tailed distributions.
-
-    seen_items: movieIds this user has already interacted with (typically
-    their train history). FAISS returns nearest neighbors purely by
-    embedding distance with no notion of what a user has already watched,
-    so candidates already in seen_items are dropped here before feature
-    rows are built -- this is the single place every retrieval-based
-    caller (serving, UI, ranker training) funnels through, so "never
-    recommend something already seen" is enforced once, not per call site.
-    Popularity/CF/ALS already do their own seen-item filtering internally;
-    this brings the embedding-based path to the same standard.
-    """
     stats = user_stats.get(user_id, {"n_interactions": 0, "days_since_last_interaction": 0.0})
     profile = user_genre_profiles.get(user_id, Counter())
     seen_items = seen_items or set()

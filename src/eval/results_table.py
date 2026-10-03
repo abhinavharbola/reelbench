@@ -1,14 +1,8 @@
-"""
-Shared read-modify-write logic for results/comparison_table.csv, used by
-both run_phase1.py and evaluate_pipeline_models.py so the merge behavior
-and row order can't drift apart between the two callers.
-"""
-
 from pathlib import Path
 
 import polars as pl
 
-CANONICAL_MODEL_ORDER = ["popularity", "item_item_cf", "als", "two_tower", "sasrec"]
+CANONICAL_MODEL_ORDER = ["popularity", "item_item_cf", "als", "bpr", "two_tower", "sasrec"]
 
 
 def upsert_results(table_path: Path, new_rows: list[dict], owned_models: list[str]) -> pl.DataFrame:

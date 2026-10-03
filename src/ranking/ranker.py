@@ -1,9 +1,3 @@
-"""
-LightGBM re-ranker on top of retrieved candidates. Uses LambdaRank
-(learning-to-rank), grouped by user, so training directly optimizes ranking
-quality rather than pointwise classification.
-"""
-
 from pathlib import Path
 
 import lightgbm as lgb
@@ -13,19 +7,9 @@ from src.ranking.features import FEATURE_COLUMNS
 
 
 def build_training_table(
-    per_user_features: dict[int, pl.DataFrame],  # userId -> build_features_for_candidates() output
-    positive_items: dict[int, set],  # userId -> ground-truth positive movieIds (from a held-out slice of train)
+    per_user_features: dict[int, pl.DataFrame],
+    positive_items: dict[int, set],
 ) -> pl.DataFrame:
-    """Concatenates per-user feature tables and attaches a binary label:
-    1 if the candidate is one of that user's known positives, else 0.
-
-    Skips any user whose feature table came back empty (height 0, e.g. a
-    retrieval call that returned zero candidates -- can happen for a
-    malformed embedding such as a NaN vector, which FAISS surfaces as an
-    all-invalid-index result). One bad embedding shouldn't crash training
-    for every other user; the skip is silent in the return value but the
-    caller can compare `len(per_user_features)` to the row count if it
-    wants to know how many users were dropped."""
     tables = []
     for uid, feats in per_user_features.items():
         if feats.height == 0:
@@ -39,8 +23,10 @@ def build_training_table(
 
 
 def train_ranker(training_table: pl.DataFrame, num_boost_round: int = 200) -> lgb.Booster:
-    """training_table must be sorted/grouped by userId (LightGBM ranking
-    requires contiguous groups) with FEATURE_COLUMNS + label columns present."""
+    if training_table.height == 0:
+        raise ValueError("ranker training table is empty: no candidates were generated for any user")
+    if int(training_table["label"].sum()) == 0:
+        raise ValueError("ranker training table has no positive labels: retrieved candidates never hit a held-out item")
     training_table = training_table.sort("userId")
 
     group_sizes = (
@@ -56,8 +42,6 @@ def train_ranker(training_table: pl.DataFrame, num_boost_round: int = 200) -> lg
 
     params = {
         "objective": "lambdarank",
-        "metric": "ndcg",
-        "ndcg_eval_at": [10, 20],
         "learning_rate": 0.05,
         "num_leaves": 31,
         "verbose": -1,
@@ -67,20 +51,6 @@ def train_ranker(training_table: pl.DataFrame, num_boost_round: int = 200) -> lg
 
 
 def rank_candidates(model: lgb.Booster, features: pl.DataFrame, top_k: int) -> list[tuple[int, float]]:
-    """features: build_features_for_candidates() output for one user.
-    Returns [(movieId, model_score), ...] ranked by predicted relevance,
-    highest first.
-
-    Returns the ranker's own predicted score, not the raw
-    embedding_similarity feature that went into it -- the ranking order
-    comes from this LightGBM prediction (a combination of similarity,
-    popularity, recency, genre match, and user stats), so a caller that
-    displayed embedding_similarity as "the score" would show a value that
-    doesn't correspond to the order the list is actually sorted in. This
-    was previously an actual bug: src/serving/app.py and
-    ui/data_access.py both looked up embedding_similarity per movieId
-    after ranking and labeled it "score", which does not
-    necessarily decrease monotonically down the list."""
     if features.height == 0:
         return []
     X = features.select(FEATURE_COLUMNS).to_numpy()

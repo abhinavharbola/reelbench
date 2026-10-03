@@ -1,12 +1,3 @@
-"""
-ALS / BPR matrix factorization baseline, via the `implicit` library, CPU.
-
-Both algorithms in `implicit` expect a (users x items) sparse matrix of
-confidence/interaction weights and natively support filtering out items the
-user has already interacted with at recommend-time — no manual seen-item
-bookkeeping needed here, unlike the other baselines.
-"""
-
 import numpy as np
 import polars as pl
 from scipy import sparse
@@ -16,10 +7,6 @@ from implicit.bpr import BayesianPersonalizedRanking
 
 
 class MatrixFactorizationModel:
-    """Wraps implicit's ALS or BPR behind the same fit/recommend interface
-    used by the other baselines, so the evaluation harness treats all
-    approaches identically."""
-
     def __init__(self, method: str = "als", factors: int = 64, iterations: int = 15, regularization: float = 0.01):
         if method not in ("als", "bpr"):
             raise ValueError("method must be 'als' or 'bpr'")
@@ -66,7 +53,7 @@ class MatrixFactorizationModel:
 
     def recommend(self, user_id: int, k: int) -> list[int]:
         if user_id not in self.user_id_to_idx:
-            return []  # cold user, not covered by this model -> handled separately
+            return []
 
         user_idx = self.user_id_to_idx[user_id]
         item_indices, _scores = self.model.recommend(

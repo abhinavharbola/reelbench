@@ -1,19 +1,8 @@
-"""
-Ingestion for MovieLens 25M.
-
-Expects the raw dataset already unzipped at data/raw/ml-25m/ with the
-standard files: ratings.csv, movies.csv.
-
-Download manually (not fetchable from this sandbox's network allowlist):
-https://files.grouplens.org/datasets/movielens/ml-25m.zip
-
-All loading is done with polars and explicit dtypes to stay RAM-safe on a
-16GB machine. Positive interaction = rating >= POSITIVE_THRESHOLD.
-"""
-
 from pathlib import Path
 
 import polars as pl
+
+from src.config import DATA_DIR
 
 POSITIVE_THRESHOLD = 4.0
 
@@ -32,7 +21,6 @@ MOVIES_SCHEMA = {
 
 
 def load_ratings(raw_dir: Path) -> pl.DataFrame:
-    """Load ratings.csv with explicit dtypes, no full-file dtype inference."""
     path = raw_dir / "ml-25m" / "ratings.csv"
     if not path.exists():
         raise FileNotFoundError(
@@ -44,7 +32,6 @@ def load_ratings(raw_dir: Path) -> pl.DataFrame:
 
 
 def load_movies(raw_dir: Path) -> pl.DataFrame:
-    """Load movies.csv with explicit dtypes."""
     path = raw_dir / "ml-25m" / "movies.csv"
     if not path.exists():
         raise FileNotFoundError(f"{path} not found. See load_ratings() for download info.")
@@ -52,12 +39,6 @@ def load_movies(raw_dir: Path) -> pl.DataFrame:
 
 
 def to_implicit_feedback(ratings: pl.DataFrame, threshold: float = POSITIVE_THRESHOLD) -> pl.DataFrame:
-    """
-    Convert explicit ratings to implicit positive interactions.
-
-    rating >= threshold -> positive interaction (userId, movieId, timestamp)
-    Everything else is dropped: absence of interaction, not negative signal.
-    """
     return (
         ratings.filter(pl.col("rating") >= threshold)
         .select(["userId", "movieId", "timestamp"])
@@ -66,7 +47,6 @@ def to_implicit_feedback(ratings: pl.DataFrame, threshold: float = POSITIVE_THRE
 
 
 def build_processed_dataset(raw_dir: Path, processed_dir: Path) -> None:
-    """Full ingestion pipeline: load, convert, write parquet artifacts."""
     processed_dir.mkdir(parents=True, exist_ok=True)
 
     ratings = load_ratings(raw_dir)
@@ -82,4 +62,4 @@ def build_processed_dataset(raw_dir: Path, processed_dir: Path) -> None:
 
 
 if __name__ == "__main__":
-    build_processed_dataset(Path("data/raw"), Path("data/processed"))
+    build_processed_dataset(Path("data/raw"), DATA_DIR)

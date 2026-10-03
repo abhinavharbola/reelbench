@@ -1,13 +1,3 @@
-"""
-Evaluation harness. Built and tested before any model (per project spec
-section 4) — every approach is scored through these exact functions, same
-protocol, no per-model exceptions.
-
-All ranking metrics take:
-  recommended: list[item_id]  -- top-K, in ranked order, for one user
-  relevant:    set[item_id]   -- ground-truth positives for that user (test set)
-"""
-
 import math
 
 
@@ -23,7 +13,7 @@ def _dcg_at_k(recommended: list, relevant: set, k: int) -> float:
     dcg = 0.0
     for i, item in enumerate(recommended[:k]):
         if item in relevant:
-            dcg += 1.0 / math.log2(i + 2)  # rank i is 0-indexed -> position i+1
+            dcg += 1.0 / math.log2(i + 2)
     return dcg
 
 
@@ -55,7 +45,6 @@ def average_precision_at_k(recommended: list, relevant: set, k: int) -> float:
 
 
 def map_at_k(all_recommended: list[list], all_relevant: list[set], k: int) -> float:
-    """Mean of average_precision_at_k across all users."""
     if not all_recommended:
         return 0.0
     scores = [
@@ -76,8 +65,6 @@ def mean_ndcg_at_k(all_recommended: list[list], all_relevant: list[set], k: int)
 
 
 def catalog_coverage(all_recommended: list[list], catalog_size: int) -> float:
-    """Fraction of the full item catalog that appears at least once across
-    all users' recommendation lists."""
     if catalog_size == 0:
         return 0.0
     recommended_items = set()
@@ -86,16 +73,10 @@ def catalog_coverage(all_recommended: list[list], catalog_size: int) -> float:
     return len(recommended_items) / catalog_size
 
 
-def intra_list_diversity(recommended: list, item_genres: dict) -> float:
-    """
-    1 - average pairwise genre-overlap (Jaccard) similarity within one
-    user's recommendation list. item_genres maps item_id -> set[genre].
-    Higher = more diverse. Returns 0.0 for lists of length < 2.
-    """
+def _pairwise_diversity(recommended: list, item_genres: dict) -> float | None:
     n = len(recommended)
     if n < 2:
-        return 0.0
-
+        return None
     pair_count = 0
     similarity_sum = 0.0
     for i in range(n):
@@ -103,21 +84,23 @@ def intra_list_diversity(recommended: list, item_genres: dict) -> float:
         for j in range(i + 1, n):
             genres_j = item_genres.get(recommended[j], set())
             union = genres_i | genres_j
-            if union:
-                sim = len(genres_i & genres_j) / len(union)
-            else:
-                sim = 0.0
-            similarity_sum += sim
+            if not union:
+                continue
+            similarity_sum += len(genres_i & genres_j) / len(union)
             pair_count += 1
-
     if pair_count == 0:
-        return 0.0
-    avg_similarity = similarity_sum / pair_count
-    return 1.0 - avg_similarity
+        return None
+    return 1.0 - similarity_sum / pair_count
+
+
+def intra_list_diversity(recommended: list, item_genres: dict) -> float:
+    value = _pairwise_diversity(recommended, item_genres)
+    return 0.0 if value is None else value
 
 
 def mean_intra_list_diversity(all_recommended: list[list], item_genres: dict) -> float:
-    scores = [intra_list_diversity(rec, item_genres) for rec in all_recommended]
+    scores = [_pairwise_diversity(rec, item_genres) for rec in all_recommended]
+    scores = [s for s in scores if s is not None]
     return sum(scores) / len(scores) if scores else 0.0
 
 
@@ -128,8 +111,6 @@ def evaluate_all(
     item_genres: dict,
     ks: tuple[int, ...] = (10, 20),
 ) -> dict:
-    """Single entry point every model's evaluation run calls, so all 5
-    approaches are scored identically."""
     results = {}
     for k in ks:
         results[f"recall@{k}"] = mean_recall_at_k(all_recommended, all_relevant, k)

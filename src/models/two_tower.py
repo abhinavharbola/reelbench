@@ -1,19 +1,3 @@
-"""
-Two-tower neural recommender: separate user and item towers, trained with
-in-batch negative sampling (each positive pair's other batch items serve as
-negatives for it — standard, cheap, no explicit negative sampling needed).
-
-Meant to be trained on Colab/Kaggle GPU (see scripts/train_two_tower.py).
-Checkpointing is save/resume by design: Colab/Kaggle free-tier sessions can
-be cut off mid-run, so training must survive being restarted from the last
-checkpoint rather than assuming one uninterrupted session.
-
-After training, export_embeddings() writes user/item embedding tables to
-parquet — those are the only artifacts the CPU-only serving layer and FAISS
-retrieval need; the trained torch model itself never has to run at serving
-time.
-"""
-
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,8 +11,6 @@ from src.eval.tracking import log_model_run
 
 
 class InteractionDataset(Dataset):
-    """One row per positive (user_idx, item_idx) pair."""
-
     def __init__(self, user_idx: np.ndarray, item_idx: np.ndarray):
         self.user_idx = torch.as_tensor(user_idx, dtype=torch.long)
         self.item_idx = torch.as_tensor(item_idx, dtype=torch.long)
@@ -41,8 +23,6 @@ class InteractionDataset(Dataset):
 
 
 class Tower(nn.Module):
-    """Embedding lookup + small MLP, shared shape for both user and item towers."""
-
     def __init__(self, num_ids: int, embedding_dim: int = 64, hidden_dim: int = 128):
         super().__init__()
         self.embedding = nn.Embedding(num_ids, embedding_dim)
@@ -54,7 +34,7 @@ class Tower(nn.Module):
 
     def forward(self, ids: torch.Tensor) -> torch.Tensor:
         x = self.embedding(ids)
-        x = x + self.mlp(x)  # residual, keeps early training stable
+        x = x + self.mlp(x)
         return nn.functional.normalize(x, dim=-1)
 
 
@@ -68,13 +48,19 @@ class TwoTowerModel(nn.Module):
         return self.user_tower(user_ids), self.item_tower(item_ids)
 
 
-def in_batch_negative_loss(user_emb: torch.Tensor, item_emb: torch.Tensor, temperature: float = 0.1) -> torch.Tensor:
-    """
-    Scores = user_emb @ item_emb.T, shape (B, B). The diagonal is the true
-    positive for each row; every off-diagonal item in the batch acts as a
-    negative for that row, free of explicit negative sampling.
-    """
+def in_batch_negative_loss(
+    user_emb: torch.Tensor,
+    item_emb: torch.Tensor,
+    user_ids: torch.Tensor | None = None,
+    item_ids: torch.Tensor | None = None,
+    temperature: float = 0.1,
+) -> torch.Tensor:
     logits = user_emb @ item_emb.T / temperature
+    if user_ids is not None and item_ids is not None:
+        same_user = user_ids.unsqueeze(1) == user_ids.unsqueeze(0)
+        same_item = item_ids.unsqueeze(1) == item_ids.unsqueeze(0)
+        diagonal = torch.eye(logits.shape[0], dtype=torch.bool, device=logits.device)
+        logits = logits.masked_fill((same_user | same_item) & ~diagonal, float("-inf"))
     labels = torch.arange(logits.shape[0], device=logits.device)
     return nn.functional.cross_entropy(logits, labels)
 
@@ -110,9 +96,7 @@ def save_checkpoint(path: Path, model: TwoTowerModel, optimizer, epoch: int, id_
             "epoch": epoch,
             "num_users": len(id_maps.user_id_to_idx),
             "num_items": len(id_maps.item_id_to_idx),
-            "embedding_dim": embedding_dim,  # must be restored on resume, or
-            # a non-default --embedding-dim run fails load_state_dict with a
-            # shape mismatch after a Colab/Kaggle disconnect
+            "embedding_dim": embedding_dim,
             "user_id_to_idx": id_maps.user_id_to_idx,
             "item_id_to_idx": id_maps.item_id_to_idx,
         },
@@ -121,18 +105,8 @@ def save_checkpoint(path: Path, model: TwoTowerModel, optimizer, epoch: int, id_
 
 
 def load_checkpoint(path: Path, device: str = "cpu"):
-    """Returns (model, optimizer_state_dict, epoch, id_maps) or None if no
-    checkpoint exists yet -- callers use this to decide fresh-start vs resume.
-
-    Note: id_maps are restored from the checkpoint, not rebuilt from
-    train_df, so a resumed run must be pointed at the same train_df used to
-    start training -- otherwise user/item index assignments could drift."""
     if not path.exists():
         return None
-    # explicit weights_only=False: checkpoints store id_maps/config dicts
-    # alongside tensors, not just tensors, so the safer weights_only=True
-    # default (which PyTorch is moving toward) can't load this file --
-    # being explicit here avoids a silent break on a future torch upgrade
     ckpt = torch.load(path, map_location=device, weights_only=False)
     id_maps = IdMaps(
         user_id_to_idx=ckpt["user_id_to_idx"],
@@ -153,6 +127,7 @@ def train(
     lr: float = 1e-3,
     embedding_dim: int = 64,
     device: str | None = None,
+    run_name: str = "two_tower",
 ) -> tuple[TwoTowerModel, IdMaps]:
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -161,6 +136,13 @@ def train(
         model, optimizer_state, start_epoch, id_maps = resumed
         print(f"resuming from checkpoint at epoch {start_epoch}")
         start_epoch += 1
+        missing_users = set(train_df["userId"].unique().to_list()) - set(id_maps.user_id_to_idx)
+        missing_items = set(train_df["movieId"].unique().to_list()) - set(id_maps.item_id_to_idx)
+        if missing_users or missing_items:
+            raise ValueError(
+                f"checkpoint at {checkpoint_path} was trained on different data: "
+                f"{len(missing_users)} users and {len(missing_items)} items in the training frame are unknown to it"
+            )
     else:
         id_maps = build_id_maps(train_df)
         model = TwoTowerModel(len(id_maps.user_id_to_idx), len(id_maps.item_id_to_idx), embedding_dim)
@@ -171,6 +153,8 @@ def train(
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     if optimizer_state is not None:
         optimizer.load_state_dict(optimizer_state)
+        for group in optimizer.param_groups:
+            group["lr"] = lr
 
     user_idx = train_df["userId"].replace_strict(id_maps.user_id_to_idx).to_numpy()
     item_idx = train_df["movieId"].replace_strict(id_maps.item_id_to_idx).to_numpy()
@@ -183,7 +167,7 @@ def train(
         for u, i in loader:
             u, i = u.to(device), i.to(device)
             user_emb, item_emb = model(u, i)
-            loss = in_batch_negative_loss(user_emb, item_emb)
+            loss = in_batch_negative_loss(user_emb, item_emb, u, i)
 
             optimizer.zero_grad()
             loss.backward()
@@ -193,14 +177,18 @@ def train(
         avg_loss = total_loss / max(len(loader), 1)
         final_avg_loss = avg_loss
         print(f"epoch {epoch}: avg_loss={avg_loss:.4f}")
-        save_checkpoint(checkpoint_path, model, optimizer, epoch, id_maps)  # every epoch: quota can cut in at any point
+        save_checkpoint(checkpoint_path, model, optimizer, epoch, id_maps)
 
-    # log once, after training completes -- per spec, only the final
-    # checkpoint per model is logged, never intermediate epochs
     if final_avg_loss is not None:
         with log_model_run(
-            "two_tower",
-            params={"epochs": epochs, "batch_size": batch_size, "lr": lr, "embedding_dim": embedding_dim, "device": device},
+            run_name,
+            params={
+                "epochs": epochs,
+                "batch_size": batch_size,
+                "lr": lr,
+                "embedding_dim": model.user_tower.embedding.embedding_dim,
+                "device": device,
+            },
             metrics={"final_train_loss": final_avg_loss},
         ):
             pass
@@ -208,10 +196,9 @@ def train(
     return model, id_maps
 
 
-def export_embeddings(model: TwoTowerModel, id_maps: IdMaps, output_dir: Path, device: str = "cpu") -> None:
-    """Writes user_embeddings.parquet and item_embeddings.parquet. These
-    parquet files, not the model weights, are what CPU serving and FAISS
-    retrieval consume downstream."""
+def export_embeddings(
+    model: TwoTowerModel, id_maps: IdMaps, output_dir: Path, device: str = "cpu", prefix: str = "two_tower"
+) -> None:
     model = model.to(device)
     model.eval()
 
@@ -228,19 +215,16 @@ def export_embeddings(model: TwoTowerModel, id_maps: IdMaps, output_dir: Path, d
     user_df = pl.DataFrame({"userId": user_ids_sorted, "embedding": user_emb.tolist()})
     item_df = pl.DataFrame({"movieId": item_ids_sorted, "embedding": item_emb.tolist()})
 
-    user_df.write_parquet(output_dir / "two_tower_user_embeddings.parquet")
-    item_df.write_parquet(output_dir / "two_tower_item_embeddings.parquet")
+    user_df.write_parquet(output_dir / f"{prefix}_user_embeddings.parquet")
+    item_df.write_parquet(output_dir / f"{prefix}_item_embeddings.parquet")
     print(f"exported {len(user_ids_sorted)} user and {len(item_ids_sorted)} item embeddings to {output_dir}")
 
-    # check both tables: a NaN item embedding is arguably worse than a NaN
-    # user embedding, since item embeddings all go into the shared FAISS
-    # index every user's query searches against, not just one user's query.
-    n_nan_users = int(np.isnan(user_emb).any(axis=1).sum())
+    n_nan_users = int((~np.isfinite(user_emb)).any(axis=1).sum())
     if n_nan_users > 0:
-        print(f"WARNING: {n_nan_users} of {len(user_ids_sorted)} exported user embeddings contain NaN. "
+        print(f"WARNING: {n_nan_users} of {len(user_ids_sorted)} exported user embeddings contain NaN or infinity. "
               f"Run scripts/check_embeddings_for_nan.py on the output to identify affected users.")
 
-    n_nan_items = int(np.isnan(item_emb).any(axis=1).sum())
+    n_nan_items = int((~np.isfinite(item_emb)).any(axis=1).sum())
     if n_nan_items > 0:
-        print(f"WARNING: {n_nan_items} of {len(item_ids_sorted)} exported item embeddings contain NaN. "
+        print(f"WARNING: {n_nan_items} of {len(item_ids_sorted)} exported item embeddings contain NaN or infinity. "
               f"Run scripts/check_embeddings_for_nan.py on the output to identify affected items.")

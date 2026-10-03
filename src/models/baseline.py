@@ -1,14 +1,3 @@
-"""
-Baseline models: popularity and item-item collaborative filtering.
-
-Item-item CF note (this fixes the RAM issue flagged during review): a naive
-dense item-item similarity matrix over MovieLens 25M's ~62k items is
-~15GB at float32, which blows the 16GB budget before anything else is
-loaded. This implementation computes similarity as a sparse matrix in
-row-blocks and keeps only the top-K neighbors per item, so memory stays
-bounded by (num_items * top_k) instead of (num_items ** 2).
-"""
-
 from collections import defaultdict
 
 import numpy as np
@@ -17,36 +6,20 @@ from scipy import sparse
 
 
 class PopularityModel:
-    """Ranks items by raw positive-interaction count in train. Same
-    ranked list for every user, filtered by what that user has already
-    seen."""
-
     def __init__(self):
         self.ranked_items: list[int] = []
         self._seen_by_user: dict[int, set] = {}
 
     def fit(self, train: pl.DataFrame) -> None:
-        # sort by (count desc, movieId asc): group_by() alone doesn't
-        # guarantee row order for ties, so without a secondary key here
-        # the relative rank of equally-popular movies changes from run to
-        # run on identical data, which silently shifts ndcg@k/map@k/
-        # diversity for any k beyond the point where counts stop being
-        # unique -- confirmed by running the same seeded pipeline twice
-        # and diffing the resulting comparison_table.csv.
         counts = (
             train.group_by("movieId")
             .agg(pl.len().alias("count"))
             .sort(["count", "movieId"], descending=[True, False])
         )
         self.ranked_items = counts["movieId"].to_list()
-        self._seen_by_user = (
-            train.group_by("userId")
-            .agg(pl.col("movieId"))
-            .to_dict(as_series=False)
-        )
+        grouped = train.group_by("userId").agg(pl.col("movieId")).to_dict(as_series=False)
         self._seen_by_user = {
-            uid: set(items)
-            for uid, items in zip(self._seen_by_user["userId"], self._seen_by_user["movieId"])
+            uid: set(items) for uid, items in zip(grouped["userId"], grouped["movieId"])
         }
 
     def recommend(self, user_id: int, k: int) -> list[int]:
@@ -61,20 +34,6 @@ class PopularityModel:
 
 
 class ItemItemCF:
-    """
-    Cosine-similarity item-item CF, sparse and top-K bounded.
-
-    fit():
-      1. build a binary (items x users) sparse interaction matrix
-      2. L2-normalize each item's row -> cosine similarity reduces to a dot product
-      3. compute similarity in row-blocks (not all at once) and keep only
-         the top_k highest-similarity neighbors per item, discard the rest
-         immediately -> peak memory is bounded, never O(num_items^2)
-
-    recommend(): score candidate items as the sum of similarities to items
-    the user has already interacted with, weighted by neighbor rank.
-    """
-
     def __init__(self, top_k: int = 50, block_size: int = 2000):
         self.top_k = top_k
         self.block_size = block_size
@@ -108,7 +67,7 @@ class ItemItemCF:
         for start in range(0, n_items, self.block_size):
             end = min(start + self.block_size, n_items)
             block = item_user_normalized[start:end]
-            sim_block = block @ item_user_normalized.T  # (block_size x n_items), sparse
+            sim_block = block @ item_user_normalized.T
 
             sim_block = sim_block.tocsr()
             for local_idx in range(sim_block.shape[0]):
@@ -130,11 +89,9 @@ class ItemItemCF:
                         break
                 self.neighbors[item_ids[global_idx]] = top
 
+        grouped = train.group_by("userId").agg(pl.col("movieId")).to_dict(as_series=False)
         self._seen_by_user = {
-            uid: set(items)
-            for uid, items in zip(
-                *train.group_by("userId").agg(pl.col("movieId")).to_dict(as_series=False).values()
-            )
+            uid: set(items) for uid, items in zip(grouped["userId"], grouped["movieId"])
         }
 
     def recommend(self, user_id: int, k: int) -> list[int]:
@@ -149,8 +106,5 @@ class ItemItemCF:
                     continue
                 scores[neighbor_item] += sim
 
-        # secondary movieId tiebreak for the same determinism reason as
-        # PopularityModel.fit() above -- accumulated scores can tie exactly
-        # when two candidates share the same set of contributing neighbors.
         ranked = sorted(scores.items(), key=lambda x: (-x[1], x[0]))
         return [item for item, _ in ranked[:k]]
