@@ -1,13 +1,3 @@
-"""
-Main Streamlit entrypoint. Three screens per project spec: viewer
-selection, recommendations comparison, model performance dashboard. All
-three read only cached local artifacts -- no live external calls, no
-recomputation, no auth, no write-back.
-
-Lives in a top-level ui/ package (not under src/), so the run command is
-`streamlit run ui/app.py` from the repo root.
-"""
-
 import sys
 from pathlib import Path
 
@@ -18,7 +8,7 @@ import streamlit as st
 from ui.screens import dashboard, persona_selector, recommendations
 from ui.styles import inject_custom_css
 
-st.set_page_config(page_title="ReelBench: MovieLens Recommender", page_icon="\U0001F3AC", layout="wide")
+st.set_page_config(page_title="ReelBench: MovieLens Recommender", layout="wide")
 st.markdown(inject_custom_css(), unsafe_allow_html=True)
 
 if "selected_user_id" not in st.session_state:
@@ -28,7 +18,7 @@ with st.sidebar:
     st.markdown('<div class="mc-wordmark">Reel<span>Bench</span></div>', unsafe_allow_html=True)
     st.markdown(
         '<div class="mc-sidebar-tagline">A two-stage recommender benchmark on MovieLens 25M. '
-        '5 approaches, one shared evaluation harness.</div>',
+        'Several approaches, one shared evaluation harness.</div>',
         unsafe_allow_html=True,
     )
 

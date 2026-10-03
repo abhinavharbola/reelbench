@@ -1,25 +1,9 @@
-# Pins Streamlit's own theme to light mode with this app's palette.
-#
-# Without this file, Streamlit falls back to the browser/OS's preferred
-# color scheme for every native widget that ui/styles.py's custom CSS
-# doesn't explicitly override -- dataframe internals, expanders, disabled
-# states, tooltips, and more. On a system set to dark mode, that produces
-# exactly the "several boxes and text not visible in light theme" symptom:
-# ui/styles.py's CSS makes the page shell light, but Streamlit's own
-# components underneath were still rendering with dark-theme defaults.
-# This file is the actual fix; the CSS overrides in styles.py are
-# reinforcement for the handful of widgets that don't fully follow
-# [theme] on their own (multiselect chips, radio dot color, etc).
-#
-# Values mirror ui/styles.py's COLORS dict -- if you retune the palette
-# there, update these five to match.
-
 [theme]
 base = "light"
-primaryColor = "#B3242E"          # COLORS["accent_marquee"]
-backgroundColor = "#F2F1ED"       # COLORS["bg_primary"]
-secondaryBackgroundColor = "#E6E3DA"  # COLORS["bg_surface_raised"]
-textColor = "#1A1814"             # COLORS["text_primary"]
+primaryColor = "#B3242E"
+backgroundColor = "#F2F1ED"
+secondaryBackgroundColor = "#E6E3DA"
+textColor = "#1A1814"
 font = "sans serif"
 
 [client]

@@ -1,6 +1,3 @@
-"""Screen 3: model performance dashboard. Read-only, reads directly from
-results/comparison_table.csv -- no recomputation in the UI."""
-
 import math
 
 import plotly.graph_objects as go
@@ -14,10 +11,6 @@ from ui.styles import COLORS, MODEL_COLORS, MODEL_LABELS
 
 
 def _build_metrics_figure(table, metrics: list[str]):
-    """One cohesive figure for all selected metrics, not N independent
-    charts -- consistent bar width and spacing, per-subplot headroom so
-    value labels never clip the panel edge, and a shared color legend
-    instead of relying on color-learning from other screens."""
     models = table["model"].to_list()
     labels = [MODEL_LABELS.get(m, m) for m in models]
     colors = [MODEL_COLORS.get(m, COLORS["text_muted"]) for m in models]
@@ -42,7 +35,7 @@ def _build_metrics_figure(table, metrics: list[str]):
             go.Bar(
                 x=labels, y=values, marker_color=colors,
                 text=[f"{v:.3f}" for v in values], textposition="outside",
-                textfont=dict(size=11, family="IBM Plex Mono, monospace"),
+                textfont=dict(size=11, family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"),
                 showlegend=False,
             ),
             row=row, col=col,
@@ -53,11 +46,11 @@ def _build_metrics_figure(table, metrics: list[str]):
         )
         fig.update_xaxes(tickangle=-20, row=row, col=col)
 
-    fig.update_annotations(font=dict(family="Fraunces, serif", size=15, color=COLORS["text_primary"]))
+    fig.update_annotations(font=dict(family="Georgia, Times New Roman, serif", size=15, color=COLORS["text_primary"]))
     fig.update_layout(
         plot_bgcolor=COLORS["bg_surface"],
         paper_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, sans-serif", color=COLORS["text_primary"]),
+        font=dict(family="system-ui, -apple-system, Segoe UI, Roboto, sans-serif", color=COLORS["text_primary"]),
         margin=dict(t=55, b=40, l=40, r=30),
         height=310 * rows,
         showlegend=False,
@@ -66,17 +59,11 @@ def _build_metrics_figure(table, metrics: list[str]):
 
 
 def _render_color_legend(models: list[str]):
-    """Compact, self-contained color key so this screen reads correctly
-    even for someone who lands here first, without having seen the
-    color-coding established on the recommendations screen."""
     chips = "".join(render_model_chip(m, MODEL_LABELS.get(m, m)) for m in models)
     st.markdown(f'<div style="margin: 0.2rem 0 1.2rem 0;">{chips}</div>', unsafe_allow_html=True)
 
 
 def _leaderboard_kpis(table: pl.DataFrame) -> list[dict]:
-    """Headline numbers pulled from the table so the person doesn't have
-    to read a bar chart just to find out which model currently wins on
-    each metric."""
     kpis = [{
         "label": "Approaches compared",
         "value": str(table.height),
@@ -84,7 +71,7 @@ def _leaderboard_kpis(table: pl.DataFrame) -> list[dict]:
         "accent": COLORS["accent_ink"],
     }]
 
-    for metric, title in [("ndcg@10", "Best NDCG@10"), ("recall@10", "Best Recall@10"), ("diversity", "Best Diversity")]:
+    for metric, title in [("ndcg@10", "Best NDCG@10"), ("recall@10", "Best Recall@10"), ("map@10", "Best MAP@10")]:
         if metric not in table.columns:
             continue
         best_row = table.sort(metric, descending=True).row(0, named=True)
@@ -109,8 +96,7 @@ def render():
     if table is None:
         render_empty_state(
             "No results found.",
-            icon="\U0001F4CA",
-            action_hint="Run: python scripts/run_phase1.py &mdash; to populate results/comparison_table.csv.",
+            action_hint="Run: python scripts/run_phase1.py to populate results/comparison_table.csv.",
         )
         return
 
