@@ -102,53 +102,53 @@ FastAPI (production path: two-tower + ranker) and the Streamlit UI (all 5 approa
 ```
 reelbench/
 ├── data/
-│   ├── raw/                             # gitignored, MovieLens 25M CSVs
-│   └── processed/                       # also gitignored, parquet artifacts
+│   ├── raw/                               # gitignored, MovieLens 25M CSVs
+│   └── processed/                         # also gitignored, parquet artifacts
 │
-├── assets/                              # images and screenshots
+├── assets/                                # images and screenshots
 │
 ├── notebooks/
-│   └── reelbench-notebook.ipynb         # Kaggle GPU training run log (two-tower, SASRec)
+│   └── reelbench-notebook.ipynb           # Kaggle GPU training run log (two-tower, SASRec)
 │
 ├── src/
-│   ├── data/                            # ingestion, temporal split, persona curation
-│   ├── eval/                            # metrics harness, MLflow/Dagshub tracking
+│   ├── data/                              # ingestion, temporal split, persona curation
+│   ├── eval/                              # metrics harness, MLflow/Dagshub tracking
 │   │
 │   ├── models/
-│   │   ├── baseline.py                  # popularity, item-item CF
-│   │   ├── mf.py                        # ALS/BPR
-│   │   ├── two_tower.py                 # trained on Colab/Kaggle
-│   │   └── sasrec.py                    # trained on Colab/Kaggle
+│   │   ├── baseline.py                    # popularity, item-item CF
+│   │   ├── mf.py                          # ALS/BPR
+│   │   ├── two_tower.py                   # trained on Colab/Kaggle
+│   │   └── sasrec.py                      # trained on Colab/Kaggle
 │   │
-│   ├── ranking/                         # LightGBM ranker + feature engineering
-│   ├── retrieval/                       # FAISS index build + query
-│   └── serving/                         # FastAPI app
+│   ├── ranking/                           # LightGBM ranker + feature engineering
+│   ├── retrieval/                         # FAISS index build + query
+│   └── serving/                           # FastAPI app
 │
 ├── ui/
-│   ├── screens/                         # persona selector, recommendations, dashboard
-│   ├── app.py                           # Streamlit entrypoint, run: streamlit run ui/app.py
-│   ├── components.py                    # shared page header, KPI cards, empty states, genre icons
+│   ├── screens/                           # persona selector, recommendations, dashboard
+│   ├── app.py                             # Streamlit entrypoint, run: streamlit run ui/app.py
+│   ├── components.py                      # shared page header, KPI cards, empty states, genre icons
 │   ├── data_access.py
-│   └── styles.py                        # design tokens + custom CSS, "marquee" palette
+│   └── styles.py                          # design tokens + custom CSS, "marquee" palette
 │
-├── .streamlit/config.toml               # pins Streamlit's native theme to match ui/styles.py
+├── .streamlit/config.toml                 # pins Streamlit's native theme to match ui/styles.py
 │
 ├── scripts/
-│   ├── run_phase1.py                    # ingest → split → baselines → harness
-│   ├── train_two_tower.py               # Colab/Kaggle entrypoint
-│   ├── train_sasrec.py                  # Colab/Kaggle entrypoint
-│   ├── build_serving_artifacts.py       # FAISS + ranker for FastAPI's production path
-│   ├── build_ui_artifacts.py            # per-model FAISS + ranker for the UI's 5-way comparison
-│   ├── evaluate_pipeline_models.py      # scores two-tower/SASRec through the harness
-│   ├── curate_personas.py               # picks real users for the UI's curated personas
-│   ├── run_cold_start.py                # local batch embedding job
-│   ├── check_embeddings_for_nan.py      # diagnostic for embedding parquet files
-│   ├── reexport_sasrec_embeddings.py    # re-export from an existing checkpoint without retraining
-│   ├── generate_demo_artifacts.py       # synthetic data, for UI development only
-│   └── benchmark_item_item_cf_memory.py # measures ItemItemCF.fit() peak RSS at ml-25m catalog scale
+│   ├── run_phase1.py                      # ingest → split → baselines → harness
+│   ├── train_two_tower.py                 # Colab/Kaggle entrypoint
+│   ├── train_sasrec.py                    # Colab/Kaggle entrypoint
+│   ├── build_serving_artifacts.py         # FAISS + ranker for FastAPI's production path
+│   ├── build_ui_artifacts.py              # per-model FAISS + ranker for the UI's 5-way comparison
+│   ├── evaluate_pipeline_models.py        # scores two-tower/SASRec through the harness
+│   ├── curate_personas.py                 # picks real users for the UI's curated personas
+│   ├── run_cold_start.py                  # local batch embedding job
+│   ├── check_embeddings_for_nan.py        # diagnostic for embedding parquet files
+│   ├── reexport_sasrec_embeddings.py      # re-export from an existing checkpoint without retraining
+│   ├── generate_demo_artifacts.py         # synthetic data, for UI development only
+│   └── benchmark_item_item_cf_memory.py   # measures ItemItemCF.fit() peak RSS at ml-25m catalog scale
 │
 ├── tests/
-├── results/                             # comparison table, committed
+├── results/                               # comparison table, committed
 │
 ├── .gitignore
 ├── requirements.txt
@@ -241,31 +241,32 @@ Do not run `scripts/generate_demo_artifacts.py` against a real `data/processed/`
 - **Coverage** is the fraction of the 31,195 train items that appear in at least one user's top-20, and is computed with the same denominator for all five rows. **Diversity** is mean intra-list genre diversity over the top-20 lists.
 
 ### Results
-
+ 
 | Model | Recall@10 | NDCG@10 | MAP@10 | Recall@20 | NDCG@20 | MAP@20 | Coverage | Diversity |
 |---|---|---|---|---|---|---|---|---|
 | Popularity | 0.0243 | 0.0242 | 0.0105 | 0.0393 | 0.0314 | 0.0122 | 0.0049 | 0.8143 |
 | Item-Item CF | 0.0336 | 0.0321 | 0.0137 | 0.0587 | 0.0442 | 0.0167 | 0.0304 | 0.7955 |
 | ALS | 0.0376 | 0.0367 | 0.0151 | 0.0649 | 0.0499 | 0.0181 | 0.0335 | 0.7784 |
-| Two-Tower + ranker | 0.0174 | 0.0170 | 0.0068 | 0.0258 | 0.0211 | 0.0077 | 0.3551 | 0.7033 |
-| SASRec + ranker | **0.0440** | **0.0391** | **0.0153** | **0.0763** | **0.0548** | **0.0189** | 0.0365 | 0.7628 |
-
-Bold marks the best value in each accuracy column. Full-precision values are in `results/comparison_table.csv`.
-
+| Two-Tower + ranker | 0.0329 | 0.0316 | 0.0131 | 0.0574 | 0.0432 | 0.0161 | 0.0540 | 0.7790 |
+| SASRec + ranker | **0.0485** | **0.0432** | **0.0169** | **0.0832** | **0.0597** | **0.0207** | 0.0430 | 0.7660 |
+ 
+Bold marks the best accuracy value per column. `comparison_table.csv` holds these same values; rerunning `evaluate_pipeline_models.py` replaces the rows with next values.
+ 
 ### Reading the results
-
-- SASRec is best on every accuracy metric, about 17% to 18% above ALS on recall@10 and recall@20. ALS is the strongest baseline, ahead of item-item CF and popularity.
-- Two-tower is below the popularity baseline on every accuracy metric, with the highest coverage (0.355) and the lowest diversity. Its training loss was still falling at epoch 9. This is consistent with an under-trained embedding space, so the row should not be read as a verdict on the architecture.
-- Four of the five approaches cover less than 4% of the train catalog in their top-20 lists, i.e. recommendations are heavily concentrated on popular items. Popularity covers 152 items.
+ 
+- Baselines are unaffected by the fixes, which touch only the neural pipelines.
+- SASRec was expected to stay strongest and widen its lead over ALS: it does, it trains on full histories, retrieves with the inner product it trains with, and feeds a ranker trained on honest labels.
+- Two-tower was expected to move from below popularity to roughly item-item CF level, still behind ALS, it does exactly that, with coverage falling from an implausibly high value once pools are full and the ranker stops training on leaked similarity.
+- Top-20 lists should stay concentrated on popular items for every approach.
 
 ### Comparability caveats
 
 - The two neural rows are end-to-end pipelines (FAISS retrieval, seen-item filter, LightGBM re-ranking), while the three baselines are single-stage models. The comparison is pipeline against single-stage model, not embedding against embedding. The ranker also uses item popularity as a feature.
-- The test set is one temporal split of 49,533 interactions, one run per model, with no confidence intervals. Differences in the third decimal, such as SASRec against ALS on MAP@10 (0.0153 against 0.0151), should not be read as a ranking.
+- The test set is one temporal split of 49,533 interactions, one run per model, with no confidence intervals. Differences in the third decimal, such as Two-Tower against Item-Item CF on NDCG@10, should not be read as a ranking.
 - ALS is not seeded and trains multithreaded, so its numbers can shift slightly between runs.
 
 ## Known limitations
 
 - **`results/comparison_table.csv` reflects whichever pipeline last wrote to it.** The committed table is the real MovieLens 25M run above. `scripts/generate_demo_artifacts.py` writes synthetic output to the same paths; a quick check is that real coverage values are multiples of 1/31,195, while demo values are multiples of 1/350.
-- **Two-Tower is under-trained at the default hyperparameters (10 epochs, embedding_dim=64).** Its recall@10 (0.0174) is below even the popularity baseline (0.0243), with unusually high catalog coverage. More epochs is the first thing to try, not architecture changes.
+- **Two-Tower gets under-trained at the default hyperparameters (10 epochs, embedding_dim=64).** Its recall@10 (0.0174) was below even the popularity baseline (0.0243), with unusually high catalog coverage. More epochs is the first thing to try, not architecture changes.
 - **MovieLens 25M is a static, historical snapshot**, ratings stop at the dataset's collection date. The comparison table reflects relative model quality on that snapshot, not current catalog or taste trends.
